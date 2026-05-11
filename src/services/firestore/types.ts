@@ -43,6 +43,13 @@ export interface Lead {
   lockedByName?: string; // Name of telecaller who locked
   lockedAt?: Date;
   lockExpiresAt?: Date;
+  
+  // Lead escalation system (junior → senior workflow)
+  sourcedBy?: string; // uid of junior who identified this lead
+  handledBy?: string; // uid of senior who closed the deal
+  escalationStatus?: "none" | "pending_senior" | "closed_by_senior"; // Escalation workflow status
+  escalatedAt?: Date; // When escalated to senior
+  escalationNotes?: string; // Junior's notes for senior
 }
 
 export interface LeadImportBatch {
@@ -54,12 +61,29 @@ export interface LeadImportBatch {
   importedRows: number;
   duplicateRows: number;
   failedRows: number;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "active" | "archived";
   errorMessage?: string;
   summary: {
     successful: number;
     failed: number;
     duplicates: number;
+  };
+  
+  // NEW: Daily batch tracking fields
+  batchDate?: Date; // Date batch was imported (YYYY-MM-DD)
+  dayIdentifier?: string; // Batch_2026-05-11 format
+  batchStatus?: "active" | "completed" | "archived"; // Lifecycle status
+  
+  // NEW: Assignment metrics
+  assignedLeadsCount?: number; // How many leads are assigned
+  completedCallsCount?: number; // How many calls have been made
+  
+  // NEW: Daily metrics
+  dailyMetrics?: {
+    assignedToday?: number;
+    completedToday?: number;
+    convertedToday?: number;
+    assignmentTime?: Date;
   };
 }
 

@@ -12,6 +12,7 @@ import {
   writeBatch,
   doc,
   deleteDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -56,6 +57,28 @@ interface ImportBatch {
   duplicateRows: number;
   failedRows: number;
   status: string;
+  // NEW: Daily batch fields
+  dayIdentifier?: string;
+  batchDate?: Date;
+  batchStatus?: "active" | "completed" | "archived";
+  assignedLeadsCount?: number;
+  completedCallsCount?: number;
+}
+
+// Helper: Generate batch identifier with date
+function generateBatchIdentifier(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `Batch_${year}-${month}-${day}`;
+}
+
+// Helper: Get today's date at midnight
+function getTodayDate(): Date {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
 }
 
 function ImportLeadsPage() {
@@ -116,7 +139,11 @@ function ImportLeadsPage() {
     mutationFn: async (leads: ParsedLead[]) => {
       if (!user || !selectedFile) throw new Error("Missing context");
 
-      // Create import batch document
+      // Generate daily batch identifier
+      const dayIdentifier = generateBatchIdentifier();
+      const batchDate = getTodayDate();
+
+      // Create import batch document with daily batch fields
       const batchRef = await addDoc(collection(db, "leadImportBatches"), {
         fileName: selectedFile.name,
         uploadedBy: user.uid,
@@ -126,6 +153,12 @@ function ImportLeadsPage() {
         duplicateRows: parseWarnings.filter((w) => w.includes("Duplicate")).length,
         failedRows: parseErrors.length,
         status: "processing",
+        // NEW: Daily batch fields
+        dayIdentifier: dayIdentifier,
+        batchDate: batchDate,
+        batchStatus: "active",
+        assignedLeadsCount: 0, // Will update when leads are assigned
+        completedCallsCount: 0, // Will track when calls are made
         summary: {
           successful: leads.length,
           failed: parseErrors.length,
@@ -179,39 +212,82 @@ function ImportLeadsPage() {
 
   const undoBatchMutation = useMutation({
     mutationFn: async (batchId: string) => {
-      // 1. Fetch all leads that belong to this batch
+      // Step 1: Get the batch to check status
+      const batchDoc = await getDocs(query(collection(db, "leadImportBatches"), where("__name__", "==", batchId)));
+      if (batchDoc.empty) throw new Error("Batch not found");
+      const batchData = batchDoc.docs[0].data();
+
+      // Step 2: Fetch all leads that belong to this batch
       const leadsQuery = query(collection(db, "leads"), where("uploadBatchId", "==", batchId));
       const leadsSnapshot = await getDocs(leadsQuery);
 
-      // 2. Delete all those leads in chunks of 500 (Firestore limit for writeBatch)
-      const batches = [];
-      let currentBatch = writeBatch(db);
-      let count = 0;
+      // Step 3: Check for assigned leads and calls
+      const assignedLeads: string[] = [];
+      const leadsWithCalls: string[] = [];
+      const leadsToDelete: string[] = [];
 
-      leadsSnapshot.docs.forEach((document) => {
-        currentBatch.delete(document.ref);
-        count++;
-        if (count === 500) {
-          batches.push(currentBatch.commit());
-          currentBatch = writeBatch(db);
-          count = 0;
+      for (const leadDoc of leadsSnapshot.docs) {
+        const leadData = leadDoc.data();
+        const leadId = leadDoc.id;
+
+        // Check if lead is assigned
+        if (leadData.assignedTo) {
+          assignedLeads.push(leadId);
         }
-      });
-      if (count > 0) {
-        batches.push(currentBatch.commit());
-      }
-      await Promise.all(batches);
 
-      // 3. Delete the batch document itself
-      await deleteDoc(doc(db, "leadImportBatches", batchId));
+        // Check if lead has any calls
+        const callsQuery = query(collection(db, "calls"), where("leadId", "==", leadId));
+        const callsSnapshot = await getDocs(callsQuery);
+        if (callsSnapshot.size > 0) {
+          leadsWithCalls.push(leadId);
+        }
+
+        // Mark for deletion only if unassigned and no calls
+        if (!leadData.assignedTo && callsSnapshot.size === 0) {
+          leadsToDelete.push(leadId);
+        }
+      }
+
+      // Step 4: If there are assigned leads or calls, throw error with details
+      if (assignedLeads.length > 0 || leadsWithCalls.length > 0) {
+        const errorMsg = `Cannot delete batch: ${assignedLeads.length} assigned leads, ${leadsWithCalls.length} leads with calls. Please reassign leads first.`;
+        throw new Error(errorMsg);
+      }
+
+      // Step 5: Delete only unassigned leads with no calls
+      if (leadsToDelete.length > 0) {
+        const batches = [];
+        let currentBatch = writeBatch(db);
+        let count = 0;
+
+        for (const leadId of leadsToDelete) {
+          currentBatch.delete(doc(db, "leads", leadId));
+          count++;
+          if (count === 500) {
+            batches.push(currentBatch.commit());
+            currentBatch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (count > 0) {
+          batches.push(currentBatch.commit());
+        }
+        await Promise.all(batches);
+      }
+
+      // Step 6: Archive the batch instead of deleting (for safety)
+      await updateDoc(doc(db, "leadImportBatches", batchId), {
+        batchStatus: "archived",
+        status: "archived",
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["import-batches"] });
-      toast.success("Batch and associated leads deleted successfully");
+      toast.success("Batch archived successfully");
     },
     onError: (err: any) => {
-      toast.error(`Failed to undo batch: ${err.message}`);
+      toast.error(`Failed to delete batch: ${err.message}`);
     },
   });
 
@@ -446,10 +522,34 @@ function ImportLeadsPage() {
                     key={batch.id}
                     className="rounded-lg border p-3 hover:bg-muted/50 transition"
                   >
-                    <p className="text-xs font-semibold truncate">{batch.fileName}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {batch.importedRows} leads • {batch.uploadedAt.toLocaleDateString()}
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold truncate">{batch.fileName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {batch.importedRows} leads • {batch.uploadedAt.toLocaleDateString()}
+                        </p>
+                        {batch.dayIdentifier && (
+                          <p className="text-xs text-blue-600 font-medium">{batch.dayIdentifier}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        {batch.batchStatus === "active" && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Active
+                          </span>
+                        )}
+                        {batch.batchStatus === "completed" && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            Completed
+                          </span>
+                        )}
+                        {batch.batchStatus === "archived" && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                            Archived
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ))
               )}
@@ -470,29 +570,45 @@ function ImportLeadsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Batch ID</TableHead>
                   <TableHead>File Name</TableHead>
                   <TableHead className="text-right">Imported</TableHead>
-                  <TableHead className="text-right">Duplicates</TableHead>
-                  <TableHead className="text-right">Failed</TableHead>
-                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Assigned</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {importHistory.map((batch) => (
                   <TableRow key={batch.id}>
+                    <TableCell className="text-xs font-medium text-blue-600">
+                      {batch.dayIdentifier || "N/A"}
+                    </TableCell>
                     <TableCell className="text-sm font-medium truncate max-w-xs">
                       {batch.fileName}
                     </TableCell>
                     <TableCell className="text-right text-green-700 font-semibold">
                       {batch.importedRows}
                     </TableCell>
-                    <TableCell className="text-right text-yellow-700">
-                      {batch.duplicateRows}
+                    <TableCell className="text-right text-blue-700">
+                      {batch.assignedLeadsCount || 0}
                     </TableCell>
-                    <TableCell className="text-right text-red-700">{batch.failedRows}</TableCell>
-                    <TableCell className="text-sm">
-                      {batch.uploadedAt.toLocaleDateString()}
+                    <TableCell>
+                      {batch.batchStatus === "active" && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          Active
+                        </span>
+                      )}
+                      {batch.batchStatus === "completed" && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          Completed
+                        </span>
+                      )}
+                      {batch.batchStatus === "archived" && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          Archived
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -501,7 +617,15 @@ function ImportLeadsPage() {
                         className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 px-2"
                         disabled={undoBatchMutation.isPending}
                         onClick={() => {
-                          if (confirm("Are you sure you want to undo this upload? This will permanently delete all leads from this batch.")) {
+                          const assignedCount = batch.assignedLeadsCount || 0;
+                          const callsCount = batch.completedCallsCount || 0;
+                          
+                          if (assignedCount > 0 || callsCount > 0) {
+                            confirm(`⚠️ Warning!\n\nThis batch has:\n- ${assignedCount} assigned leads\n- ${callsCount} completed calls\n\nThese cannot be deleted. Please reassign leads first.`);
+                            return;
+                          }
+                          
+                          if (confirm("Are you sure you want to archive this batch? Only unassigned leads will be deleted.")) {
                             undoBatchMutation.mutate(batch.id);
                           }
                         }}

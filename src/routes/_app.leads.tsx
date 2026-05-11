@@ -34,8 +34,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { LEAD_STATUSES, PRIORITIES, statusBadgeClass, priorityBadgeClass } from "@/lib/lead-utils";
-import { Plus, Search, Phone, MessageCircle, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, Phone, MessageCircle, Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
+import { writeBatch } from "firebase/firestore";
 
 export const Route = createFileRoute("/_app/leads")({
   component: LeadsPage,
@@ -54,6 +56,20 @@ type Lead = {
   priority: string;
   createdAt: Date;
   createdBy: string;
+  uploadBatchId?: string;
+  // Escalation fields
+  sourcedBy?: string; // Junior who sourced the lead
+  handledBy?: string; // Senior who closed it
+  escalationStatus?: "none" | "pending_senior" | "closed_by_senior"; // Escalation status
+  escalatedAt?: Date; // When escalated
+  escalationNotes?: string; // Notes from junior
+};
+
+type LeadImportBatch = {
+  id: string;
+  dayIdentifier?: string;
+  batchStatus?: string;
+  uploadedAt?: Date;
 };
 
 function LeadsPage() {
@@ -61,8 +77,11 @@ function LeadsPage() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
+  const [escalationFilter, setEscalationFilter] = useState<string>("all");
   const [editing, setEditing] = useState<Lead | null>(null);
   const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const { data: leads = [], isLoading } = useQuery({
     queryKey: ["leads"],
@@ -74,6 +93,19 @@ function LeadsPage() {
         ...doc.data(),
         createdAt: doc.data().createdAt?.toDate?.() || new Date(),
       })) as Lead[];
+    },
+  });
+
+  const { data: batches = [] } = useQuery({
+    queryKey: ["import-batches"],
+    queryFn: async () => {
+      const q = query(collection(db, "leadImportBatches"), orderBy("uploadedAt", "desc"));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        uploadedAt: doc.data().uploadedAt?.toDate?.() || new Date(),
+      })) as LeadImportBatch[];
     },
   });
 
@@ -89,6 +121,7 @@ function LeadsPage() {
 
   const filtered = leads.filter((l) => {
     if (status !== "all" && l.leadStatus !== status) return false;
+    if (escalationFilter !== "all" && l.escalationStatus !== escalationFilter) return false;
     if (!q) return true;
     const s = q.toLowerCase();
     return (
@@ -101,7 +134,23 @@ function LeadsPage() {
   const upsert = useMutation({
     mutationFn: async (form: Partial<Lead>) => {
       if (editing) {
-        await updateDoc(doc(db, "leads", editing.id), form);
+        // Check if this is a senior closing an escalated lead
+        const leadToUpdate = leads.find((l) => l.id === editing.id);
+        if (
+          leadToUpdate?.escalationStatus === "pending_senior" &&
+          leadToUpdate?.sourcedBy &&
+          form.leadStatus === "Completed"
+        ) {
+          // Senior closed the deal - mark as closed_by_senior and assign back to junior
+          await updateDoc(doc(db, "leads", editing.id), {
+            ...form,
+            escalationStatus: "closed_by_senior",
+            handledBy: user?.uid, // Mark which senior closed it
+            assignedTo: leadToUpdate.sourcedBy, // Assign back to junior who sourced it
+          });
+        } else {
+          await updateDoc(doc(db, "leads", editing.id), form);
+        }
       } else {
         const leadRef = doc(collection(db, "leads"));
         await setDoc(leadRef, {
@@ -130,6 +179,64 @@ function LeadsPage() {
     },
     onError: (e: any) => toast.error(e.message),
   });
+
+  const bulkDel = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const batch = writeBatch(db);
+      ids.forEach((id) => {
+        batch.delete(doc(db, "leads", id));
+      });
+      await batch.commit();
+    },
+    onSuccess: () => {
+      toast.success(`${selected.size} lead(s) deleted`);
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      setSelected(new Set());
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const toggleSelect = (id: string) => {
+    const newSelected = new Set(selected);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelected(newSelected);
+  };
+
+  const toggleBatchExpand = (batchId: string) => {
+    const newExpanded = new Set(expanded);
+    if (newExpanded.has(batchId)) {
+      newExpanded.delete(batchId);
+    } else {
+      newExpanded.add(batchId);
+    }
+    setExpanded(newExpanded);
+  };
+
+  // Group leads by batch
+  const leadsByBatch = filtered.reduce(
+    (acc, lead) => {
+      const batchId = lead.uploadBatchId || "unassigned";
+      if (!acc[batchId]) {
+        acc[batchId] = [];
+      }
+      acc[batchId].push(lead);
+      return acc;
+    },
+    {} as Record<string, Lead[]>
+  );
+
+  const batchList = Object.entries(leadsByBatch)
+    .sort(([aId], [bId]) => {
+      const batchA = batches.find((bat) => bat.id === aId);
+      const batchB = batches.find((bat) => bat.id === bId);
+      const timeA = batchA?.uploadedAt || new Date(0);
+      const timeB = batchB?.uploadedAt || new Date(0);
+      return new Date(timeB).getTime() - new Date(timeA).getTime();
+    });
 
   return (
     <div className="space-y-5">
@@ -185,105 +292,246 @@ function LeadsPage() {
             ))}
           </SelectContent>
         </Select>
+        <Select value={escalationFilter} onValueChange={setEscalationFilter}>
+          <SelectTrigger className="sm:w-56">
+            <SelectValue placeholder="Escalation" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All leads</SelectItem>
+            <SelectItem value="pending_senior">🔼 Pending Senior</SelectItem>
+            <SelectItem value="closed_by_senior">✓ Closed by Senior</SelectItem>
+            <SelectItem value="none">No escalation</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
-      <div className="rounded-xl border bg-card shadow-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-muted-foreground">
-              <tr className="text-left">
-                <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium hidden md:table-cell">City</th>
-                <th className="px-4 py-3 font-medium hidden lg:table-cell">Course</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium hidden md:table-cell">Priority</th>
-                <th className="px-4 py-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading && (
-                <tr>
-                  <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                    Loading…
-                  </td>
-                </tr>
-              )}
-              {!isLoading && filtered.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-10 text-center text-muted-foreground">
-                    No leads found. Click "Add Lead" to create one.
-                  </td>
-                </tr>
-              )}
-              {filtered.map((l) => (
-                <tr key={l.id} className="hover:bg-muted/30">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{l.customerName}</div>
-                    <div className="text-xs text-muted-foreground">{l.mobileNumber}</div>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">{l.city || "—"}</td>
-                  <td className="px-4 py-3 hidden lg:table-cell">{l.interestedCourse || "—"}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full border ${statusBadgeClass(l.leadStatus)}`}
-                    >
-                      {l.leadStatus}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full border ${priorityBadgeClass(l.priority)}`}
-                    >
-                      {l.priority}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1 justify-end">
-                      <a href={`tel:${l.mobileNumber}`}>
-                        <Button size="icon" variant="ghost" title="Call">
-                          <Phone className="h-4 w-4" />
-                        </Button>
-                      </a>
-                      <a
-                        href={`https://wa.me/${l.mobileNumber.replace(/\D/g, "")}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <Button size="icon" variant="ghost" title="WhatsApp">
-                          <MessageCircle className="h-4 w-4 text-success" />
-                        </Button>
-                      </a>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditing(l);
-                          setOpen(true);
-                        }}
-                        title="Edit"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      {role === "admin" && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => {
-                            if (confirm("Delete this lead?")) del.mutate(l.id);
-                          }}
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+      {selected.size > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-blue-900">{selected.size} lead(s) selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => {
+                if (confirm(`Delete ${selected.size} lead(s)? This cannot be undone.`)) {
+                  bulkDel.mutate(Array.from(selected));
+                }
+              }}
+              disabled={bulkDel.isPending}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Selected
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="text-center py-8 text-muted-foreground">Loading…</div>
+      )}
+
+      {!isLoading && filtered.length === 0 && (
+        <div className="text-center py-10 text-muted-foreground">No leads found. Click "Add Lead" to create one.</div>
+      )}
+
+      {!isLoading && filtered.length > 0 && (
+        <div className="space-y-4">
+        {batchList.map(([batchId, batchLeads]) => {
+          const batch = batches.find((b) => b.id === batchId);
+          const isExpanded = expanded.has(batchId);
+          const assignedCount = batchLeads.filter((l) => l.assignedTo).length;
+          const completedCount = batchLeads.filter((l) => l.leadStatus === "Completed").length;
+          const batchSelectedCount = batchLeads.filter((l) => selected.has(l.id)).length;
+
+          return (
+            <div key={batchId} className="rounded-lg border bg-card shadow-card overflow-hidden">
+              {/* Batch Header */}
+              <div
+                className="bg-gradient-to-r from-slate-50 to-slate-100 px-4 py-3 border-b cursor-pointer hover:from-slate-100 hover:to-slate-200 flex items-center justify-between"
+                onClick={() => toggleBatchExpand(batchId)}
+              >
+                <div className="flex items-center gap-3 flex-1">
+                  {isExpanded ? (
+                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-slate-900">
+                        {batch?.dayIdentifier || "Manual Leads"}
+                      </span>
+                      <span className="text-xs text-muted-foreground bg-slate-200 px-2 py-1 rounded">
+                        {batchLeads.length} leads
+                      </span>
+                      {batch?.batchStatus === "active" && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          Active
+                        </span>
+                      )}
+                      {batch?.batchStatus === "completed" && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          Completed
+                        </span>
+                      )}
+                      {batch?.batchStatus === "archived" && (
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          Archived
+                        </span>
                       )}
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {assignedCount} assigned • {completedCount} completed
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Batch Leads Table */}
+              {isExpanded && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/40 text-muted-foreground">
+                      <tr className="text-left">
+                        {role === "admin" && (
+                          <th className="px-4 py-3 font-medium w-10">
+                            <Checkbox
+                              checked={batchSelectedCount > 0 && batchSelectedCount === batchLeads.length}
+                              onCheckedChange={() => {
+                                const newSelected = new Set(selected);
+                                if (batchSelectedCount > 0 && batchSelectedCount === batchLeads.length) {
+                                  batchLeads.forEach((l) => newSelected.delete(l.id));
+                                } else {
+                                  batchLeads.forEach((l) => newSelected.add(l.id));
+                                }
+                                setSelected(newSelected);
+                              }}
+                              aria-label="Select all in batch"
+                            />
+                          </th>
+                        )}
+                        <th className="px-4 py-3 font-medium">Customer</th>
+                        <th className="px-4 py-3 font-medium hidden md:table-cell">City</th>
+                        <th className="px-4 py-3 font-medium hidden lg:table-cell">Course</th>
+                        <th className="px-4 py-3 font-medium">Status</th>
+                        <th className="px-4 py-3 font-medium hidden md:table-cell">Priority</th>
+                        <th className="px-4 py-3 font-medium text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {batchLeads.map((l) => (
+                        <tr key={l.id} className={`hover:bg-muted/30 ${selected.has(l.id) ? "bg-blue-50" : ""}`}>
+                          {role === "admin" && (
+                            <td className="px-4 py-3">
+                              <Checkbox
+                                checked={selected.has(l.id)}
+                                onCheckedChange={() => toggleSelect(l.id)}
+                                aria-label="Select lead"
+                              />
+                            </td>
+                          )}
+                          <td className="px-4 py-3">
+                            <div className="font-medium">{l.customerName}</div>
+                            <div className="text-xs text-muted-foreground">{l.mobileNumber}</div>
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell">{l.city || "—"}</td>
+                          <td className="px-4 py-3 hidden lg:table-cell">{l.interestedCourse || "—"}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col gap-2">
+                              {(() => {
+                                if (l.assignedTo) {
+                                  const telecaller = telecallers.find((t) => t.id === l.assignedTo);
+                                  if (telecaller) {
+                                    const truncatedName = telecaller.name.substring(0, 4).toUpperCase();
+                                    return (
+                                      <span
+                                        className="text-xs px-2 py-1 rounded-full border font-semibold bg-blue-50 border-blue-200 text-blue-700 cursor-help"
+                                        title={telecaller.name}
+                                      >
+                                        {truncatedName}
+                                      </span>
+                                    );
+                                  }
+                                }
+                                return (
+                                  <span
+                                    className={`text-xs px-2 py-1 rounded-full border ${statusBadgeClass(l.leadStatus)}`}
+                                  >
+                                    {l.leadStatus}
+                                  </span>
+                                );
+                              })()}
+                              
+                              {/* Escalation Badge */}
+                              {l.escalationStatus === "pending_senior" && (
+                                <span className="text-xs px-2 py-1 rounded-full border border-amber-300 bg-amber-50 text-amber-700 font-semibold">
+                                  🔼 Escalated to Senior
+                                </span>
+                              )}
+                              {l.escalationStatus === "closed_by_senior" && (
+                                <span className="text-xs px-2 py-1 rounded-full border border-green-300 bg-green-50 text-green-700 font-semibold">
+                                  ✓ Closed by Senior
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 justify-end">
+                              <a href={`tel:${l.mobileNumber}`}>
+                                <Button size="icon" variant="ghost" title="Call">
+                                  <Phone className="h-4 w-4" />
+                                </Button>
+                              </a>
+                              <a
+                                href={`https://wa.me/${l.mobileNumber.replace(/\D/g, "")}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <Button size="icon" variant="ghost" title="WhatsApp">
+                                  <MessageCircle className="h-4 w-4 text-success" />
+                                </Button>
+                              </a>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditing(l);
+                                  setOpen(true);
+                                }}
+                                title="Edit"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              {role === "admin" && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    if (confirm("Delete this lead?")) del.mutate(l.id);
+                                  }}
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
         </div>
-      </div>
+      )}
     </div>
   );
 }

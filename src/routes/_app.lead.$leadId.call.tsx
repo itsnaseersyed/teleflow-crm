@@ -27,6 +27,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -42,6 +50,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  ArrowUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -101,6 +110,11 @@ function CallPage() {
   const [callDuration, setCallDuration] = useState(0);
   const [isCallActive, setIsCallActive] = useState(false);
   
+  // Escalation state
+  const [showEscalationDialog, setShowEscalationDialog] = useState(false);
+  const [selectedSenior, setSelectedSenior] = useState("");
+  const [escalationNotes, setEscalationNotes] = useState("");
+  
   // Lock management
   const [lockAcquired, setLockAcquired] = useState(false);
   const lockRefreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -138,14 +152,27 @@ function CallPage() {
         collection(db, "leads"),
         where("assignedTo", "==", user.uid),
         where("leadStatus", "==", "Assigned"),
-        orderBy("createdAt", "asc"),
       );
 
       const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
+      const leadsList = snap.docs.map((d) => ({
         id: d.id,
         customerName: d.data().customerName,
+        createdAt: d.data().createdAt?.toDate?.() || new Date(),
       }));
+
+      // Sort by createdAt in ascending order (client-side)
+      return leadsList.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map(({ id, customerName }) => ({ id, customerName }));
+    },
+  });
+
+  // Fetch all telecallers for escalation
+  const { data: telecallers = [] } = useQuery({
+    queryKey: ["telecallers"],
+    queryFn: async () => {
+      const q = query(collection(db, "users"), where("role", "==", "telecaller"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({ id: d.id, fullName: d.data().fullName }));
     },
   });
 
@@ -278,6 +305,66 @@ function CallPage() {
     },
     onError: (err: any) => {
       toast.error(`Save failed: ${err.message}`);
+    },
+  });
+
+  // Handle escalation to senior
+  const escalateMutation = useMutation({
+    mutationFn: async () => {
+      if (!user || !currentLead || !selectedSenior) throw new Error("Missing escalation data");
+
+      // Create call record first
+      await addDoc(collection(db, "calls"), {
+        leadId: currentLead.id,
+        telecallerId: user.uid,
+        customerName: currentLead.customerName,
+        mobileNumber: currentLead.mobileNumber,
+        city: currentLead.city,
+        interestedService: currentLead.interestedService,
+        callStatus: "Interested",
+        feedbackNotes: escalationNotes,
+        callDuration: callDuration,
+        createdAt: serverTimestamp(),
+      });
+
+      // Update lead with escalation info
+      await updateDoc(doc(db, "leads", currentLead.id), {
+        sourcedBy: user.uid, // Mark junior who sourced it
+        handledBy: selectedSenior, // Mark senior who will close it
+        escalationStatus: "pending_senior",
+        escalatedAt: serverTimestamp(),
+        escalationNotes: escalationNotes,
+        assignedTo: selectedSenior, // Assign to senior
+        lastCallStatus: "Interested",
+        lastCalledAt: serverTimestamp(),
+        leadStatus: "In Progress",
+        feedbackNotes: escalationNotes,
+      });
+
+      return true;
+    },
+    onSuccess: async () => {
+      toast.success("Lead escalated to senior telecaller!");
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["user-leads"] });
+
+      // Release lock before navigating
+      await handleReleaseLock();
+
+      setShowEscalationDialog(false);
+      setTimeout(() => {
+        if (hasNext) {
+          navigate({
+            to: "/app/lead/$leadId/call",
+            params: { leadId: allLeads[currentIndex + 1].id },
+          });
+        } else {
+          navigate({ to: "/my-leads" });
+        }
+      }, 500);
+    },
+    onError: (err: any) => {
+      toast.error(`Escalation failed: ${err.message}`);
     },
   });
 
@@ -594,14 +681,28 @@ function CallPage() {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-4 flex-wrap">
                 <Button
                   variant="outline"
                   onClick={() => navigate({ to: "/my-leads" })}
-                  disabled={saveMutation.isPending}
+                  disabled={saveMutation.isPending || escalateMutation.isPending}
                 >
                   Cancel
                 </Button>
+                
+                {/* Escalate to Senior Button - Only show when Interested */}
+                {callStatus === "Interested" && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShowEscalationDialog(true)}
+                    disabled={escalateMutation.isPending || saveMutation.isPending}
+                    className="gap-2"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                    Escalate to Senior
+                  </Button>
+                )}
+                
                 <Button
                   onClick={handleSaveCall}
                   disabled={
@@ -685,6 +786,79 @@ function CallPage() {
           </Card>
         </div>
       </div>
+
+      {/* Escalation Dialog */}
+      <Dialog open={showEscalationDialog} onOpenChange={setShowEscalationDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Escalate to Senior Telecaller</DialogTitle>
+            <DialogDescription>
+              Send this lead to a senior telecaller for closing. They will be able to see all your notes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Select Senior */}
+            <div className="space-y-2">
+              <Label htmlFor="senior-select">Select Senior Telecaller *</Label>
+              <Select value={selectedSenior} onValueChange={setSelectedSenior}>
+                <SelectTrigger id="senior-select">
+                  <SelectValue placeholder="Choose a senior..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {telecallers
+                    .filter((tc) => tc.id !== user?.uid) // Don't show self
+                    .map((tc) => (
+                      <SelectItem key={tc.id} value={tc.id}>
+                        {tc.fullName}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Escalation Notes */}
+            <div className="space-y-2">
+              <Label htmlFor="esc-notes">Notes for Senior (Optional)</Label>
+              <Textarea
+                id="esc-notes"
+                placeholder="Add any notes or context for the senior telecaller..."
+                value={escalationNotes}
+                onChange={(e) => setEscalationNotes(e.target.value)}
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowEscalationDialog(false)}
+              disabled={escalateMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => escalateMutation.mutate()}
+              disabled={!selectedSenior || escalateMutation.isPending}
+              className="bg-gradient-accent text-white gap-2"
+            >
+              {escalateMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Escalating...
+                </>
+              ) : (
+                <>
+                  <ArrowUp className="h-4 w-4" />
+                  Escalate Lead
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

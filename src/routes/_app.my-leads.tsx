@@ -61,6 +61,12 @@ interface Lead {
   lockedBy?: string;
   lockedByName?: string;
   lockExpiresAt?: Date;
+  // Escalation fields
+  sourcedBy?: string; // Junior who sourced the lead
+  handledBy?: string; // Senior who closed it
+  escalationStatus?: "none" | "pending_senior" | "closed_by_senior"; // Escalation status
+  escalatedAt?: Date; // When escalated
+  escalationNotes?: string; // Notes from junior
 }
 
 // Lock Status Badge Component
@@ -99,7 +105,7 @@ function MyLeadsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("Assigned");
 
-  // Fetch assigned leads
+  // Fetch assigned leads (excluding escalated ones)
   const { data: leads = [], isLoading } = useQuery({
     queryKey: ["my-leads", user?.uid, filterStatus],
     enabled: !!user,
@@ -110,7 +116,41 @@ function MyLeadsPage() {
         collection(db, "leads"),
         where("assignedTo", "==", user.uid),
         where("leadStatus", "==", filterStatus),
-        orderBy("createdAt", "asc"),
+      );
+
+      const snap = await getDocs(q);
+      const leadsList = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+        createdAt: d.data().createdAt?.toDate?.() || new Date(),
+        lastCalledAt: d.data().lastCalledAt?.toDate?.() || undefined,
+      })) as Lead[];
+
+      // Filter out escalated leads (don't show pending_senior ones in active queue)
+      const filteredByEscalation = leadsList.filter(
+        (lead) => lead.escalationStatus !== "pending_senior"
+      );
+
+      // Sort by createdAt in ascending order (client-side)
+      return filteredByEscalation.sort(
+        (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
+      );
+    },
+  });
+
+  // Fetch converted leads sourced by current user (closed by senior)
+  const { data: convertedLeads = [], isLoading: convertedLoading } = useQuery({
+    queryKey: ["my-converted-leads", user?.uid],
+    enabled: !!user,
+    queryFn: async () => {
+      if (!user) return [];
+
+      const q = query(
+        collection(db, "leads"),
+        where("sourcedBy", "==", user.uid),
+        where("escalationStatus", "==", "closed_by_senior"),
+        where("leadStatus", "==", "Completed"),
+        orderBy("createdAt", "desc")
       );
 
       const snap = await getDocs(q);
@@ -140,6 +180,7 @@ function MyLeadsPage() {
     pending: leads.filter((l) => l.leadStatus === "Assigned").length,
     inProgress: leads.filter((l) => l.leadStatus === "In Progress").length,
     completed: leads.filter((l) => l.leadStatus === "Completed").length,
+    converted: convertedLeads.length,
   };
 
   const handleStartCall = (leadId: string) => {
@@ -160,7 +201,7 @@ function MyLeadsPage() {
       </div>
 
       {/* Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div>
@@ -190,6 +231,14 @@ function MyLeadsPage() {
             <div>
               <p className="text-xs text-green-600 mb-1 uppercase font-semibold">Completed</p>
               <p className="text-3xl font-bold text-green-700">{stats.completed}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-purple-200 bg-purple-50">
+          <CardContent className="pt-6">
+            <div>
+              <p className="text-xs text-purple-600 mb-1 uppercase font-semibold">Converted ⭐</p>
+              <p className="text-3xl font-bold text-purple-700">{stats.converted}</p>
             </div>
           </CardContent>
         </Card>
@@ -368,6 +417,72 @@ function MyLeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* My Converted Leads Section */}
+      {stats.converted > 0 && (
+        <Card className="border-purple-200 bg-purple-50">
+          <CardHeader>
+            <CardTitle className="text-purple-900">⭐ Leads You Sourced & Got Converted</CardTitle>
+            <CardDescription className="text-purple-800">
+              These leads were escalated to senior telecallers and successfully converted.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {convertedLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : convertedLeads.length === 0 ? (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>No converted leads yet. Keep sourcing qualified leads!</AlertDescription>
+              </Alert>
+            ) : (
+              <div className="space-y-3">
+                {convertedLeads.map((lead) => (
+                  <div
+                    key={lead.id}
+                    className="p-4 rounded-lg border border-purple-200 bg-white flex items-center justify-between hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <p className="font-semibold text-purple-900">{lead.customerName}</p>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Phone className="h-3 w-3" />
+                          <span>{lead.mobileNumber}</span>
+                        </div>
+                        {lead.city && (
+                          <div className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />
+                            <span>{lead.city}</span>
+                          </div>
+                        )}
+                        {lead.interestedService && (
+                          <div className="flex items-center gap-1">
+                            <Target className="h-3 w-3" />
+                            <span>{lead.interestedService}</span>
+                          </div>
+                        )}
+                        <div className="text-xs text-purple-600 font-semibold">
+                          Closed by: {lead.handledBy ? "Senior" : "---"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                        ✓ Converted
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

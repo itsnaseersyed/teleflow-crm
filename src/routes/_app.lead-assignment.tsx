@@ -84,6 +84,11 @@ function LeadAssignmentPage() {
   const [bulkAssignDialog, setBulkAssignDialog] = useState(false);
   const [bulkAssignTo, setBulkAssignTo] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("Unassigned");
+  const [quickSelectCount, setQuickSelectCount] = useState<string>("10");
+  const [customCount, setCustomCount] = useState("");
+  const [showSmartDistribution, setShowSmartDistribution] = useState(false);
+  const [selectedTelecallersForDistribution, setSelectedTelecallersForDistribution] = useState<Set<string>>(new Set());
+  const [totalLeadsForDistribution, setTotalLeadsForDistribution] = useState<string>("");
 
   // Fetch leads
   const { data: leads = [], isLoading: leadsLoading } = useQuery({
@@ -93,15 +98,17 @@ function LeadAssignmentPage() {
       const q = query(
         collection(db, "leads"),
         where("leadStatus", "==", statusFilter),
-        orderBy("createdAt", "desc"),
       );
       const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
+      const leadsList = snap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
         createdAt: d.data().createdAt?.toDate?.() || new Date(),
         assignedAt: d.data().assignedAt?.toDate?.() || undefined,
       })) as Lead[];
+      
+      // Sort by createdAt in descending order (newest first)
+      return leadsList.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     },
   });
 
@@ -225,6 +232,109 @@ function LeadAssignmentPage() {
     }
   };
 
+  const handleQuickSelect = () => {
+    let count = 0;
+    if (quickSelectCount === "custom") {
+      count = parseInt(customCount) || 0;
+    } else {
+      count = parseInt(quickSelectCount);
+    }
+
+    if (count <= 0) {
+      toast.error("Invalid count. Enter a number greater than 0.");
+      return;
+    }
+
+    if (count > filteredLeads.length) {
+      toast.warning(`Only ${filteredLeads.length} leads available. Selecting all.`);
+      count = filteredLeads.length;
+    }
+
+    const selectedIds = new Set(filteredLeads.slice(0, count).map((l) => l.id));
+    setSelectedLeads(selectedIds);
+    toast.success(`Selected ${count} leads`);
+  };
+
+  const toggleTelecallerForDistribution = (telecallerId: string) => {
+    const newSelected = new Set(selectedTelecallersForDistribution);
+    if (newSelected.has(telecallerId)) {
+      newSelected.delete(telecallerId);
+    } else {
+      newSelected.add(telecallerId);
+    }
+    setSelectedTelecallersForDistribution(newSelected);
+  };
+
+  const calculateDistribution = () => {
+    const totalCount = parseInt(totalLeadsForDistribution) || 0;
+    const telecallerCount = selectedTelecallersForDistribution.size;
+
+    if (totalCount <= 0) {
+      toast.error("Enter a valid number of leads");
+      return null;
+    }
+
+    if (telecallerCount === 0) {
+      toast.error("Select at least one telecaller");
+      return null;
+    }
+
+    if (totalCount > filteredLeads.length) {
+      toast.warning(`Only ${filteredLeads.length} leads available. Distributing all.`);
+      return calculateDistribution_Internal(filteredLeads.length, Array.from(selectedTelecallersForDistribution));
+    }
+
+    return calculateDistribution_Internal(totalCount, Array.from(selectedTelecallersForDistribution));
+  };
+
+  const calculateDistribution_Internal = (totalCount: number, telecallerIds: string[]) => {
+    const leadsPerTelecaller = Math.floor(totalCount / telecallerIds.length);
+    const remainder = totalCount % telecallerIds.length;
+
+    const distribution: { [key: string]: number } = {};
+    telecallerIds.forEach((id, index) => {
+      distribution[id] = leadsPerTelecaller + (index < remainder ? 1 : 0);
+    });
+
+    return distribution;
+  };
+
+  const handleSmartDistribution = async () => {
+    const distribution = calculateDistribution();
+    if (!distribution) return;
+
+    try {
+      const telecallerIds = Object.keys(distribution);
+      let leadIndex = 0;
+      const batch = writeBatch(db);
+
+      // Assign first totalLeadsForDistribution leads from filteredLeads
+      for (const telecallerId of telecallerIds) {
+        const count = distribution[telecallerId];
+        for (let i = 0; i < count; i++) {
+          if (leadIndex < filteredLeads.length) {
+            const lead = filteredLeads[leadIndex];
+            batch.update(doc(db, "leads", lead.id), {
+              assignedTo: telecallerId,
+              assignedAt: new Date(),
+              leadStatus: "Assigned",
+            });
+            leadIndex++;
+          }
+        }
+      }
+
+      await batch.commit();
+      qc.invalidateQueries({ queryKey: ["leads-assignment"] });
+      setShowSmartDistribution(false);
+      setSelectedTelecallersForDistribution(new Set());
+      setTotalLeadsForDistribution("");
+      toast.success("Smart distribution completed!");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
   const handleBulkAssign = () => {
     if (selectedLeads.size === 0 || !bulkAssignTo) {
       toast.error("Select leads and a telecaller");
@@ -343,6 +453,150 @@ function LeadAssignmentPage() {
             </CardHeader>
 
             <CardContent>
+              {/* Quick Select Section - Only show for Unassigned leads */}
+              {statusFilter === "Unassigned" && (
+                <div className="space-y-4 mb-4">
+                  {/* Quick Select */}
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-blue-900 mb-2">Quick Select Leads:</p>
+                        <div className="flex gap-2 flex-wrap">
+                          <Select value={quickSelectCount} onValueChange={(val) => {
+                            setQuickSelectCount(val);
+                            if (val !== "custom") setCustomCount("");
+                          }}>
+                            <SelectTrigger className="w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="10">10 Leads</SelectItem>
+                              <SelectItem value="20">20 Leads</SelectItem>
+                              <SelectItem value="30">30 Leads</SelectItem>
+                              <SelectItem value="40">40 Leads</SelectItem>
+                              <SelectItem value="50">50 Leads</SelectItem>
+                              <SelectItem value="60">60 Leads</SelectItem>
+                              <SelectItem value="custom">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+
+                          {quickSelectCount === "custom" && (
+                            <Input
+                              type="number"
+                              min="1"
+                              placeholder="Enter count..."
+                              value={customCount}
+                              onChange={(e) => setCustomCount(e.target.value)}
+                              className="w-32"
+                            />
+                          )}
+
+                          <Button
+                            onClick={handleQuickSelect}
+                            variant="outline"
+                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-100"
+                          >
+                            Select
+                          </Button>
+
+                          {selectedLeads.size > 0 && (
+                            <Button
+                              onClick={() => setSelectedLeads(new Set())}
+                              variant="ghost"
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              Clear Selection
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Smart Distribution */}
+                  <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-medium text-green-900">Smart Distribution:</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowSmartDistribution(!showSmartDistribution)}
+                        className="text-green-600 hover:text-green-700"
+                      >
+                        {showSmartDistribution ? "Hide" : "Show"}
+                      </Button>
+                    </div>
+
+                    {showSmartDistribution && (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-xs font-medium text-green-900 block mb-2">
+                            Select Telecallers:
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            {telecallers.map((tc) => (
+                              <Button
+                                key={tc.id}
+                                variant={selectedTelecallersForDistribution.has(tc.id) ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => toggleTelecallerForDistribution(tc.id)}
+                                className={selectedTelecallersForDistribution.has(tc.id) ? "bg-green-600 hover:bg-green-700" : ""}
+                              >
+                                {tc.fullName}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-medium text-green-900 block mb-2">
+                            Total Leads to Distribute:
+                          </label>
+                          <Input
+                            type="number"
+                            min="1"
+                            placeholder="e.g., 100"
+                            value={totalLeadsForDistribution}
+                            onChange={(e) => setTotalLeadsForDistribution(e.target.value)}
+                            className="w-full"
+                          />
+                        </div>
+
+                        {selectedTelecallersForDistribution.size > 0 && totalLeadsForDistribution && (
+                          <div className="p-3 bg-white rounded border border-green-200">
+                            <p className="text-xs font-medium text-green-900 mb-2">Distribution Preview:</p>
+                            <div className="space-y-1">
+                              {(() => {
+                                const dist = calculateDistribution();
+                                if (!dist) return null;
+                                return Array.from(selectedTelecallersForDistribution).map((telecallerId) => {
+                                  const tc = telecallers.find((t) => t.id === telecallerId);
+                                  const count = dist[telecallerId];
+                                  return (
+                                    <div key={telecallerId} className="flex justify-between text-xs">
+                                      <span className="text-gray-700">{tc?.fullName}:</span>
+                                      <span className="font-semibold text-green-700">{count} leads</span>
+                                    </div>
+                                  );
+                                });
+                              })()}
+                            </div>
+                          </div>
+                        )}
+
+                        <Button
+                          onClick={handleSmartDistribution}
+                          disabled={selectedTelecallersForDistribution.size === 0 || !totalLeadsForDistribution}
+                          className="w-full bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          Distribute Now
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {leadsLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

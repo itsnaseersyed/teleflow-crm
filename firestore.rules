@@ -39,19 +39,20 @@ service cloud.firestore {
       // Authenticated users can create (they become createdBy)
       allow create: if request.auth != null && isActiveUser();
       
-      // Users can update leads they created or are assigned to
-      // Admins can update any lead
-      // Lead locking: Users can only update if they have an active lock OR if updating to release lock
+      // Admins can update any lead without restrictions
+      // Non-admins can only update leads they have an active lock on
       allow update: if request.auth != null && isActiveUser() && (
+        // Admins can always update
         isAdmin() ||
+        // Non-admins must have a locked lead
         (
-          resource.data.createdBy == request.auth.uid ||
-          resource.data.assignedTo == request.auth.uid
-        ) && (
-          // Allow if user has active lock
-          (resource.data.lockedBy == request.auth.uid && resource.data.lockExpiresAt > now) ||
-          // Allow if user is releasing their lock
-          (request.resource.data.isLocked == false && resource.data.lockedBy == request.auth.uid)
+          resource.data.lockedBy == request.auth.uid && 
+          resource.data.lockExpiresAt > now
+        ) ||
+        // Non-admins can release their own lock
+        (
+          request.resource.data.lockedBy == null && 
+          resource.data.lockedBy == request.auth.uid
         )
       );
       

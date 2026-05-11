@@ -38,10 +38,9 @@ function FollowupsPage() {
         q = query(
           collection(db, "followups"),
           where("telecallerId", "==", user.uid),
-          orderBy("followupDate", "asc"),
         );
       } else {
-        q = query(collection(db, "followups"), orderBy("followupDate", "asc"));
+        q = query(collection(db, "followups"));
       }
 
       const snapshot = await getDocs(q);
@@ -60,6 +59,9 @@ function FollowupsPage() {
           mobileNumber: data.mobileNumber ?? null,
         } as Followup;
       });
+
+      // Sort by followupDate in ascending order (client-side)
+      followups.sort((a, b) => new Date(a.followupDate).getTime() - new Date(b.followupDate).getTime());
 
       // If any followup is missing customer info, batch-fetch the lead docs
       const missing = followups.filter((f) => !f.customerName && f.leadId);
