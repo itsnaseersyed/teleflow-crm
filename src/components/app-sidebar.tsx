@@ -8,8 +8,10 @@ import {
   UserCog,
   Settings,
   LogOut,
-  PhoneOutgoing,
   Headphones,
+  FileUp,
+  Send,
+  Lock,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -17,13 +19,21 @@ import { Button } from "@/components/ui/button";
 
 const baseNav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/leads", label: "Leads", icon: Users },
-  { to: "/calls/new", label: "Add Call", icon: PhoneOutgoing },
   { to: "/followups", label: "Follow-Ups", icon: CalendarClock },
   { to: "/reports", label: "Reports", icon: BarChart3 },
 ] as const;
 
-const adminOnly = [{ to: "/users", label: "Users", icon: UserCog }] as const;
+const telecallerNav = [
+  { to: "/my-leads", label: "My Leads", icon: Headphones },
+] as const;
+
+const adminNav = [
+  { to: "/leads", label: "All Leads", icon: Users },
+  { to: "/import-leads", label: "Import Leads", icon: FileUp },
+  { to: "/lead-assignment", label: "Lead Assignment", icon: Send },
+  { to: "/locked-leads", label: "Locked Leads", icon: Lock },
+  { to: "/users", label: "Users", icon: UserCog },
+] as const;
 
 const tail = [{ to: "/settings", label: "Settings", icon: Settings }] as const;
 
@@ -31,7 +41,9 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { role, signOut, fullName, user } = useAuth();
   const path = useRouterState({ select: (r) => r.location.pathname });
 
-  const items = [...baseNav, ...(role === "admin" ? adminOnly : []), ...tail];
+  // Build navigation based on role
+  const roleSpecificNav = role === "admin" ? adminNav : telecallerNav;
+  const items = [...baseNav, ...roleSpecificNav, ...tail];
 
   return (
     <aside className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground">
@@ -47,7 +59,9 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
         {items.map((item) => {
-          const active = path === item.to || (item.to !== "/dashboard" && path.startsWith(item.to));
+          const active = 
+            path === item.to || 
+            (item.to !== "/app/dashboard" && path.startsWith(item.to));
           const Icon = item.icon;
           return (
             <Link

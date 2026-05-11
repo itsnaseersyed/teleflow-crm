@@ -17,10 +17,15 @@ import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppReportsRouteImport } from './routes/_app.reports'
 import { Route as AppProfileRouteImport } from './routes/_app.profile'
+import { Route as AppMyLeadsRouteImport } from './routes/_app.my-leads'
+import { Route as AppLockedLeadsRouteImport } from './routes/_app.locked-leads'
 import { Route as AppLeadsRouteImport } from './routes/_app.leads'
+import { Route as AppLeadAssignmentRouteImport } from './routes/_app.lead-assignment'
+import { Route as AppImportLeadsRouteImport } from './routes/_app.import-leads'
 import { Route as AppFollowupsRouteImport } from './routes/_app.followups'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppCallsNewRouteImport } from './routes/_app.calls.new'
+import { Route as AppLeadLeadIdCallRouteImport } from './routes/_app.lead.$leadId.call'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -61,9 +66,29 @@ const AppProfileRoute = AppProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMyLeadsRoute = AppMyLeadsRouteImport.update({
+  id: '/my-leads',
+  path: '/my-leads',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLockedLeadsRoute = AppLockedLeadsRouteImport.update({
+  id: '/locked-leads',
+  path: '/locked-leads',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLeadsRoute = AppLeadsRouteImport.update({
   id: '/leads',
   path: '/leads',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLeadAssignmentRoute = AppLeadAssignmentRouteImport.update({
+  id: '/lead-assignment',
+  path: '/lead-assignment',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppImportLeadsRoute = AppImportLeadsRouteImport.update({
+  id: '/import-leads',
+  path: '/import-leads',
   getParentRoute: () => AppRoute,
 } as any)
 const AppFollowupsRoute = AppFollowupsRouteImport.update({
@@ -81,6 +106,11 @@ const AppCallsNewRoute = AppCallsNewRouteImport.update({
   path: '/calls/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLeadLeadIdCallRoute = AppLeadLeadIdCallRouteImport.update({
+  id: '/lead/$leadId/call',
+  path: '/lead/$leadId/call',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -88,12 +118,17 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/dashboard': typeof AppDashboardRoute
   '/followups': typeof AppFollowupsRoute
+  '/import-leads': typeof AppImportLeadsRoute
+  '/lead-assignment': typeof AppLeadAssignmentRoute
   '/leads': typeof AppLeadsRoute
+  '/locked-leads': typeof AppLockedLeadsRoute
+  '/my-leads': typeof AppMyLeadsRoute
   '/profile': typeof AppProfileRoute
   '/reports': typeof AppReportsRoute
   '/settings': typeof AppSettingsRoute
   '/users': typeof AppUsersRoute
   '/calls/new': typeof AppCallsNewRoute
+  '/lead/$leadId/call': typeof AppLeadLeadIdCallRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -101,12 +136,17 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/dashboard': typeof AppDashboardRoute
   '/followups': typeof AppFollowupsRoute
+  '/import-leads': typeof AppImportLeadsRoute
+  '/lead-assignment': typeof AppLeadAssignmentRoute
   '/leads': typeof AppLeadsRoute
+  '/locked-leads': typeof AppLockedLeadsRoute
+  '/my-leads': typeof AppMyLeadsRoute
   '/profile': typeof AppProfileRoute
   '/reports': typeof AppReportsRoute
   '/settings': typeof AppSettingsRoute
   '/users': typeof AppUsersRoute
   '/calls/new': typeof AppCallsNewRoute
+  '/lead/$leadId/call': typeof AppLeadLeadIdCallRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -116,12 +156,17 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/followups': typeof AppFollowupsRoute
+  '/_app/import-leads': typeof AppImportLeadsRoute
+  '/_app/lead-assignment': typeof AppLeadAssignmentRoute
   '/_app/leads': typeof AppLeadsRoute
+  '/_app/locked-leads': typeof AppLockedLeadsRoute
+  '/_app/my-leads': typeof AppMyLeadsRoute
   '/_app/profile': typeof AppProfileRoute
   '/_app/reports': typeof AppReportsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/users': typeof AppUsersRoute
   '/_app/calls/new': typeof AppCallsNewRoute
+  '/_app/lead/$leadId/call': typeof AppLeadLeadIdCallRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -131,12 +176,17 @@ export interface FileRouteTypes {
     | '/signup'
     | '/dashboard'
     | '/followups'
+    | '/import-leads'
+    | '/lead-assignment'
     | '/leads'
+    | '/locked-leads'
+    | '/my-leads'
     | '/profile'
     | '/reports'
     | '/settings'
     | '/users'
     | '/calls/new'
+    | '/lead/$leadId/call'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -144,12 +194,17 @@ export interface FileRouteTypes {
     | '/signup'
     | '/dashboard'
     | '/followups'
+    | '/import-leads'
+    | '/lead-assignment'
     | '/leads'
+    | '/locked-leads'
+    | '/my-leads'
     | '/profile'
     | '/reports'
     | '/settings'
     | '/users'
     | '/calls/new'
+    | '/lead/$leadId/call'
   id:
     | '__root__'
     | '/'
@@ -158,12 +213,17 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_app/dashboard'
     | '/_app/followups'
+    | '/_app/import-leads'
+    | '/_app/lead-assignment'
     | '/_app/leads'
+    | '/_app/locked-leads'
+    | '/_app/my-leads'
     | '/_app/profile'
     | '/_app/reports'
     | '/_app/settings'
     | '/_app/users'
     | '/_app/calls/new'
+    | '/_app/lead/$leadId/call'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -231,11 +291,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProfileRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/my-leads': {
+      id: '/_app/my-leads'
+      path: '/my-leads'
+      fullPath: '/my-leads'
+      preLoaderRoute: typeof AppMyLeadsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/locked-leads': {
+      id: '/_app/locked-leads'
+      path: '/locked-leads'
+      fullPath: '/locked-leads'
+      preLoaderRoute: typeof AppLockedLeadsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/leads': {
       id: '/_app/leads'
       path: '/leads'
       fullPath: '/leads'
       preLoaderRoute: typeof AppLeadsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/lead-assignment': {
+      id: '/_app/lead-assignment'
+      path: '/lead-assignment'
+      fullPath: '/lead-assignment'
+      preLoaderRoute: typeof AppLeadAssignmentRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/import-leads': {
+      id: '/_app/import-leads'
+      path: '/import-leads'
+      fullPath: '/import-leads'
+      preLoaderRoute: typeof AppImportLeadsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/followups': {
@@ -259,29 +347,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCallsNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/lead/$leadId/call': {
+      id: '/_app/lead/$leadId/call'
+      path: '/lead/$leadId/call'
+      fullPath: '/lead/$leadId/call'
+      preLoaderRoute: typeof AppLeadLeadIdCallRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppFollowupsRoute: typeof AppFollowupsRoute
+  AppImportLeadsRoute: typeof AppImportLeadsRoute
+  AppLeadAssignmentRoute: typeof AppLeadAssignmentRoute
   AppLeadsRoute: typeof AppLeadsRoute
+  AppLockedLeadsRoute: typeof AppLockedLeadsRoute
+  AppMyLeadsRoute: typeof AppMyLeadsRoute
   AppProfileRoute: typeof AppProfileRoute
   AppReportsRoute: typeof AppReportsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppUsersRoute: typeof AppUsersRoute
   AppCallsNewRoute: typeof AppCallsNewRoute
+  AppLeadLeadIdCallRoute: typeof AppLeadLeadIdCallRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppFollowupsRoute: AppFollowupsRoute,
+  AppImportLeadsRoute: AppImportLeadsRoute,
+  AppLeadAssignmentRoute: AppLeadAssignmentRoute,
   AppLeadsRoute: AppLeadsRoute,
+  AppLockedLeadsRoute: AppLockedLeadsRoute,
+  AppMyLeadsRoute: AppMyLeadsRoute,
   AppProfileRoute: AppProfileRoute,
   AppReportsRoute: AppReportsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppUsersRoute: AppUsersRoute,
   AppCallsNewRoute: AppCallsNewRoute,
+  AppLeadLeadIdCallRoute: AppLeadLeadIdCallRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

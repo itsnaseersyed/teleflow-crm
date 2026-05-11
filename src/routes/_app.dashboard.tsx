@@ -4,7 +4,7 @@ import { collection, query, where, getDocs, orderBy, limit } from "firebase/fire
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
 import { StatCard } from "@/components/stat-card";
-import { Users, PhoneCall, CalendarClock, Target, TrendingUp, CheckCircle2 } from "lucide-react";
+import { Users, PhoneCall, CalendarClock, Target, TrendingUp, CheckCircle2, Headphones, AlertCircle } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -44,7 +44,6 @@ function Dashboard() {
     enabled: !!user,
     queryFn: async () => {
       const today = startOfDayDate();
-      const week = startOfWeekDate();
       const uid = user!.uid;
 
       // ── Calls today ──────────────────────────────────────────────
@@ -60,7 +59,7 @@ function Dashboard() {
       }
 
       // ── Calls last 7 days ─────────────────────────────────────────
-      const callsWeekQ = query(collection(db, "calls"), where("createdAt", ">=", week));
+      const callsWeekQ = query(collection(db, "calls"), where("createdAt", ">=", startOfWeekDate()));
 
       // ── All leads ─────────────────────────────────────────────────
       const leadsQ = query(collection(db, "leads"), orderBy("createdAt", "desc"));
@@ -95,9 +94,21 @@ function Dashboard() {
       }
 
       const totalLeads = leads.length;
-      const converted = leads.filter((l: any) => l.leadStatus === "Converted").length;
-      const conversionRate = totalLeads ? Math.round((converted / totalLeads) * 100) : 0;
+      
+      // New metrics for lead distribution system
+      const unassignedLeads = leads.filter((l: any) => l.leadStatus === "Unassigned").length;
+      const assignedLeads = leads.filter((l: any) => l.leadStatus === "Assigned").length;
+      const inProgressLeads = leads.filter((l: any) => l.leadStatus === "In Progress").length;
+      const completedLeads = leads.filter((l: any) => l.leadStatus === "Completed").length;
+      const convertedLeads = leads.filter((l: any) => l.leadStatus === "Converted").length;
+      
+      const conversionRate = totalLeads ? Math.round((convertedLeads / totalLeads) * 100) : 0;
       const pendingFollowups = follows.filter((f: any) => f.status === "Pending").length;
+
+      // Telecaller-specific metrics
+      const myAssignedLeads = role !== "admin" ? leads.filter((l: any) => l.assignedTo === uid).length : 0;
+      const myCompletedLeads = role !== "admin" ? leads.filter((l: any) => l.assignedTo === uid && l.leadStatus === "Completed").length : 0;
+      const myConvertedLeads = role !== "admin" ? leads.filter((l: any) => l.assignedTo === uid && l.leadStatus === "Converted").length : 0;
 
       // ── Per-day call buckets (last 7 days) ────────────────────────
       const dayBuckets: Record<string, number> = {};
@@ -132,21 +143,23 @@ function Dashboard() {
         leadStatus: l.leadStatus,
       }));
 
-      const myAssigned =
-        role !== "admin" ? leads.filter((l: any) => l.assignedTo === uid).length : 0;
-      const interested = leads.filter((l: any) => l.leadStatus === "Interested").length;
-
       return {
         callsToday,
         totalLeads,
+        unassignedLeads,
+        assignedLeads,
+        inProgressLeads,
+        completedLeads,
+        convertedLeads,
         conversionRate,
         pendingFollowups,
         telecallers,
         callsChart,
         statusChart,
         recentLeads,
-        myAssigned,
-        interested,
+        myAssignedLeads,
+        myCompletedLeads,
+        myConvertedLeads,
       };
     },
   });
@@ -175,40 +188,74 @@ function Dashboard() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {role === "admin" ? (
-          <StatCard
-            title="Telecallers"
-            value={data?.telecallers ?? "—"}
-            icon={<Users className="h-5 w-5" />}
-            accent="primary"
-          />
+          <>
+            <StatCard
+              title="Telecallers"
+              value={data?.telecallers ?? "—"}
+              icon={<Users className="h-5 w-5" />}
+              accent="primary"
+            />
+            <StatCard
+              title="Total Leads"
+              value={data?.totalLeads ?? "—"}
+              icon={<Target className="h-5 w-5" />}
+              accent="accent"
+            />
+            <StatCard
+              title="Unassigned"
+              value={data?.unassignedLeads ?? "—"}
+              icon={<AlertCircle className="h-5 w-5" />}
+              accent="warning"
+            />
+            <StatCard
+              title="Assigned"
+              value={data?.assignedLeads ?? "—"}
+              icon={<Users className="h-5 w-5" />}
+              accent="secondary"
+            />
+            <StatCard
+              title="Converted"
+              value={data?.convertedLeads ?? "—"}
+              icon={<TrendingUp className="h-5 w-5" />}
+              accent="success"
+            />
+          </>
         ) : (
-          <StatCard
-            title="My Assigned Leads"
-            value={data?.myAssigned ?? "—"}
-            icon={<Users className="h-5 w-5" />}
-            accent="primary"
-          />
+          <>
+            <StatCard
+              title="My Queue"
+              value={data?.myAssignedLeads ?? "—"}
+              icon={<Headphones className="h-5 w-5" />}
+              accent="primary"
+            />
+            <StatCard
+              title="Completed Today"
+              value={data?.myCompletedLeads ?? "—"}
+              icon={<CheckCircle2 className="h-5 w-5" />}
+              accent="success"
+            />
+            <StatCard
+              title="Converted"
+              value={data?.myConvertedLeads ?? "—"}
+              icon={<TrendingUp className="h-5 w-5" />}
+              accent="accent"
+            />
+            <StatCard
+              title="Calls Today"
+              value={data?.callsToday ?? "—"}
+              icon={<PhoneCall className="h-5 w-5" />}
+              accent="secondary"
+            />
+            <StatCard
+              title="Pending Follow-ups"
+              value={data?.pendingFollowups ?? "—"}
+              icon={<CalendarClock className="h-5 w-5" />}
+              accent="warning"
+            />
+          </>
         )}
-        <StatCard
-          title="Calls Today"
-          value={data?.callsToday ?? "—"}
-          icon={<PhoneCall className="h-5 w-5" />}
-          accent="secondary"
-        />
-        <StatCard
-          title="Total Leads"
-          value={data?.totalLeads ?? "—"}
-          icon={<Target className="h-5 w-5" />}
-          accent="accent"
-        />
-        <StatCard
-          title="Conversion Rate"
-          value={`${data?.conversionRate ?? 0}%`}
-          icon={<TrendingUp className="h-5 w-5" />}
-          accent="success"
-        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

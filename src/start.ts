@@ -25,6 +25,31 @@ export const startInstance = createStart(() => ({
 
 // Client bootstrap: dynamically import client-only modules and mount the router.
 if (typeof window !== "undefined") {
+  // Handle unhandled promise rejections from browser extensions/dev tools trying to communicate
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    const message = event.reason?.message || String(event.reason);
+    // Suppress known harmless errors from browser extensions/dev tools
+    if (
+      message.includes("message channel closed") ||
+      message.includes("asynchronous response") ||
+      message.includes("Extension context invalidated")
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  // Also suppress errors from error events (different error handling path)
+  globalThis.addEventListener("error", (event) => {
+    const message = event.message || String(event);
+    if (
+      message.includes("message channel closed") ||
+      message.includes("asynchronous response") ||
+      message.includes("Extension context invalidated")
+    ) {
+      event.preventDefault();
+    }
+  });
+
   (async () => {
     try {
       const [{ createRoot }, { RouterProvider }, routerModule] = await Promise.all([

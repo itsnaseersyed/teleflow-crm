@@ -29,12 +29,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userDoc = await getDoc(doc(db, "users", uid));
       if (userDoc.exists()) {
         const data = userDoc.data();
+        if (data.isActive === false || data.deletedAt) {
+          setRole(null);
+          setFullName(null);
+          await firebaseSignOut(auth);
+          return;
+        }
         setRole((data.role as AppRole) || "telecaller");
         setFullName(data.fullName || null);
+      } else {
+        setRole(null);
+        setFullName(null);
+        await firebaseSignOut(auth);
       }
     } catch (error) {
       console.error("Failed to load profile:", error);
-      setRole("telecaller");
+      setRole(null);
+      setFullName(null);
+      await firebaseSignOut(auth);
     }
   };
 

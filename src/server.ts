@@ -2,6 +2,81 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { getFirebaseAdminServices } from "./lib/firebase-admin";
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+async function handleDeleteTelecaller(request: Request, env: unknown): Promise<Response> {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!token) {
+    return jsonResponse({ error: "Missing authorization token" }, 401);
+  }
+
+  let payload: { uid?: string };
+  try {
+    payload = (await request.json()) as { uid?: string };
+  } catch {
+    return jsonResponse({ error: "Invalid request body" }, 400);
+  }
+
+  if (!payload.uid) {
+    return jsonResponse({ error: "Missing telecaller uid" }, 400);
+  }
+
+  try {
+    const { auth, firestore } = getFirebaseAdminServices(env);
+    const decoded = await auth.verifyIdToken(token);
+    const requesterSnap = await firestore.collection("users").doc(decoded.uid).get();
+    const requester = requesterSnap.data();
+
+    if (!requesterSnap.exists || requester?.role !== "admin") {
+      return jsonResponse({ error: "Forbidden" }, 403);
+    }
+
+    const targetRef = firestore.collection("users").doc(payload.uid);
+    const targetSnap = await targetRef.get();
+
+    if (!targetSnap.exists) {
+      return jsonResponse({ error: "Telecaller profile not found" }, 404);
+    }
+
+    const target = targetSnap.data();
+    if (target?.role !== "telecaller") {
+      return jsonResponse({ error: "Only telecaller accounts can be deleted from this action" }, 400);
+    }
+
+    try {
+      await auth.deleteUser(payload.uid);
+    } catch (error: any) {
+      if (error?.code !== "auth/user-not-found") {
+        throw error;
+      }
+    }
+
+    await targetRef.update({
+      isActive: false,
+      password: null,
+      deletedAt: new Date(),
+      deletedBy: decoded.uid,
+      deletedByName: requester?.fullName || requester?.email || null,
+    });
+
+    return jsonResponse({ success: true });
+  } catch (error: any) {
+    console.error("Failed to delete telecaller:", error);
+    return jsonResponse({ error: error?.message || "Failed to delete telecaller" }, 500);
+  }
+}
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -68,6 +143,11 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/admin/delete-telecaller") {
+      return handleDeleteTelecaller(request, env);
+    }
+
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

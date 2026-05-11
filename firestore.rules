@@ -10,35 +10,46 @@ service cloud.firestore {
       return request.auth.uid == uid;
     }
 
+    function isActiveUser() {
+      return request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+
     // Users collection
     match /users/{uid} {
       // Users can read their own profile + admins can read all
-      allow read: if isUserDoc(uid) || isAdmin();
+      allow read: if isAdmin() || (isUserDoc(uid) && isActiveUser());
       // Users can only update their own profile (but not role)
-      allow write: if isUserDoc(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
+      allow write: if isAdmin() || (isUserDoc(uid) && isActiveUser() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
       // Admins can update everything including role
-      allow write: if isAdmin();
     }
 
     // Leads collection
     match /leads/{leadId} {
       // Users can read leads that are assigned to them or created by them
       // Admins can read all leads
-      allow read: if request.auth != null && (
+      allow read: if request.auth != null && isActiveUser() && (
         resource.data.createdBy == request.auth.uid ||
         resource.data.assignedTo == request.auth.uid ||
         isAdmin()
       );
       
       // Authenticated users can create (they become createdBy)
-      allow create: if request.auth != null;
+      allow create: if request.auth != null && isActiveUser();
       
       // Users can update leads they created or are assigned to
       // Admins can update any lead
-      allow update: if request.auth != null && (
-        resource.data.createdBy == request.auth.uid ||
-        resource.data.assignedTo == request.auth.uid ||
-        isAdmin()
+      // Lead locking: Users can only update if they have an active lock OR if updating to release lock
+      allow update: if request.auth != null && isActiveUser() && (
+        isAdmin() ||
+        (
+          resource.data.createdBy == request.auth.uid ||
+          resource.data.assignedTo == request.auth.uid
+        ) && (
+          // Allow if user has active lock
+          (resource.data.lockedBy == request.auth.uid && resource.data.lockExpiresAt > now) ||
+          // Allow if user is releasing their lock
+          (request.resource.data.isLocked == false && resource.data.lockedBy == request.auth.uid)
+        )
       );
       
       // Only admins can delete
@@ -48,16 +59,16 @@ service cloud.firestore {
     // Calls collection
     match /calls/{callId} {
       // Telecallers can read their own calls, admins can read all
-      allow read: if request.auth != null && (
+      allow read: if request.auth != null && isActiveUser() && (
         resource.data.telecallerId == request.auth.uid ||
         isAdmin()
       );
       
       // Telecallers can create their own calls
-      allow create: if request.auth != null && request.resource.data.telecallerId == request.auth.uid;
+      allow create: if request.auth != null && isActiveUser() && request.resource.data.telecallerId == request.auth.uid;
       
       // Telecallers can update their own calls, admins can update any
-      allow update: if request.auth != null && (
+      allow update: if request.auth != null && isActiveUser() && (
         resource.data.telecallerId == request.auth.uid ||
         isAdmin()
       );
@@ -69,16 +80,16 @@ service cloud.firestore {
     // Followups collection
     match /followups/{followupId} {
       // Telecallers can read their own followups, admins can read all
-      allow read: if request.auth != null && (
+      allow read: if request.auth != null && isActiveUser() && (
         resource.data.telecallerId == request.auth.uid ||
         isAdmin()
       );
       
       // Telecallers can create their own followups
-      allow create: if request.auth != null && request.resource.data.telecallerId == request.auth.uid;
+      allow create: if request.auth != null && isActiveUser() && request.resource.data.telecallerId == request.auth.uid;
       
       // Telecallers can update their own followups, admins can update any
-      allow update: if request.auth != null && (
+      allow update: if request.auth != null && isActiveUser() && (
         resource.data.telecallerId == request.auth.uid ||
         isAdmin()
       );
@@ -90,16 +101,16 @@ service cloud.firestore {
     // Notifications collection
     match /notifications/{notificationId} {
       // Users can only read their own notifications
-      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && isActiveUser() && resource.data.userId == request.auth.uid;
       
       // Authenticated users can create (may be created by system/cloud functions)
-      allow create: if request.auth != null;
+      allow create: if request.auth != null && isActiveUser();
       
       // Users can only update their own notifications
-      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && isActiveUser() && resource.data.userId == request.auth.uid;
       
       // Users can only delete their own notifications
-      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && isActiveUser() && resource.data.userId == request.auth.uid;
     }
   }
 }

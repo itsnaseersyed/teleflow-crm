@@ -309,7 +309,7 @@ function LeadDialog({
   const [priority, setPriority] = useState(initial?.priority ?? "Medium");
   const [feedbackNotes, setNotes] = useState(initial?.feedbackNotes ?? "");
   const [followUpDate, setFollow] = useState(initial?.followUpDate?.slice(0, 10) ?? "");
-  const [assignedTo, setAssigned] = useState(initial?.assignedTo ?? "");
+  const [assignedTo, setAssigned] = useState(initial?.assignedTo || "unassigned");
 
   return (
     <DialogContent className="sm:max-w-lg">
@@ -370,8 +370,8 @@ function LeadDialog({
           {isAdmin && (
             <Field label="Assign to">
               <Select
-                value={assignedTo || "unassigned"}
-                onValueChange={(v) => setAssigned(v === "unassigned" ? "" : v)}
+                value={assignedTo}
+                onValueChange={(v) => setAssigned(v)}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Unassigned" />
@@ -405,7 +405,7 @@ function LeadDialog({
               priority,
               feedbackNotes,
               followUpDate: followUpDate || null,
-              assignedTo: assignedTo || null,
+              assignedTo: assignedTo === "unassigned" ? null : assignedTo,
             })
           }
           className="bg-gradient-accent text-white"

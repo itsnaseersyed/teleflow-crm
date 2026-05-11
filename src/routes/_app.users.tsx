@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { collection, getDocs, query, orderBy, setDoc, doc, serverTimestamp, where } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
+import { auth } from "@/services/firestore/client";
 import { initializeApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, X } from "lucide-react";
+import { Loader2, Plus, Trash2, X } from "lucide-react";
 
 export const Route = createFileRoute("/_app/users")({
   component: UsersPage,
@@ -22,6 +23,7 @@ function UsersPage() {
   const queryClient = useQueryClient();
   const [isAdding, setIsAdding] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingUid, setDeletingUid] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -43,9 +45,10 @@ function UsersPage() {
           email: data.email,
           phone: data.phone,
           isActive: data.isActive ?? true,
+          deletedAt: data.deletedAt?.toDate?.() || null,
           createdAt: data.createdAt?.toDate?.() || new Date(),
           role: data.role || "telecaller",
-          password: data.password || "Hidden", // only for admin view
+          password: data.password ?? null,
         };
       });
     },
@@ -84,10 +87,11 @@ function UsersPage() {
         fullName: formData.fullName,
         email: formData.email,
         phone: formData.phone,
-        password: formData.password, // Optional: Storing here just so the admin can see it in the UI later
+        password: formData.password,
         role: "telecaller",
         isActive: true,
         createdAt: serverTimestamp(),
+        deletedAt: null,
       });
 
       toast.success("Telecaller created successfully!");
@@ -98,6 +102,45 @@ function UsersPage() {
       toast.error(error.message || "Failed to create telecaller");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteTelecaller = async (uid: string, name: string, email: string) => {
+    if (
+      !window.confirm(
+        `Delete credentials for ${name || email}? The profile and lead history will remain visible to admins.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingUid(uid);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error("You must be signed in to delete telecaller credentials.");
+      }
+
+      const response = await fetch("/api/admin/delete-telecaller", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ uid }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete telecaller");
+      }
+
+      toast.success("Telecaller credentials deleted. Profile and lead history were kept for admin records.");
+      queryClient.invalidateQueries({ queryKey: ["users-list"] });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete telecaller");
+    } finally {
+      setDeletingUid(null);
     }
   };
 
@@ -126,25 +169,26 @@ function UsersPage() {
                 <th className="px-4 py-3 font-medium">Role</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium hidden md:table-cell">Joined</th>
+                <th className="px-4 py-3 font-medium text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading && (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                  <td colSpan={7} className="p-6 text-center text-muted-foreground">
                     Loading…
                   </td>
                 </tr>
               )}
               {!isLoading && users.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-10 text-center text-muted-foreground">
+                  <td colSpan={7} className="p-10 text-center text-muted-foreground">
                     No telecallers yet. Click "Add Telecaller" to create one.
                   </td>
                 </tr>
               )}
               {users.map((u: any) => (
-                <tr key={u.id} className="hover:bg-muted/30">
+                <tr key={u.id} className={`hover:bg-muted/30 ${u.deletedAt ? "opacity-70" : ""}`}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-accent text-white text-xs font-semibold">
@@ -157,7 +201,7 @@ function UsersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">{u.phone || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{u.password}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{u.password || "—"}</td>
                   <td className="px-4 py-3">
                     <Badge
                       variant={u.role === "admin" ? "default" : "secondary"}
@@ -168,13 +212,34 @@ function UsersPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span
-                      className={`text-xs px-2 py-1 rounded-full border ${u.isActive ? "bg-success/15 text-success border-success/30" : "bg-muted text-muted-foreground border-border"}`}
+                      className={`text-xs px-2 py-1 rounded-full border ${u.deletedAt ? "bg-red-100 text-red-700 border-red-200" : u.isActive ? "bg-success/15 text-success border-success/30" : "bg-muted text-muted-foreground border-border"}`}
                     >
-                      {u.isActive ? "Active" : "Inactive"}
+                      {u.deletedAt ? "Deleted" : u.isActive ? "Active" : "Inactive"}
                     </span>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">
                     {new Date(u.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {u.role === "telecaller" && !u.deletedAt ? (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="gap-2"
+                        disabled={deletingUid === u.id}
+                        onClick={() => handleDeleteTelecaller(u.id, u.fullName, u.email)}
+                      >
+                        {deletingUid === u.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                        Delete Credentials
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                 </tr>
               ))}
