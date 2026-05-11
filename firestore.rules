@@ -11,7 +11,10 @@ service cloud.firestore {
     }
 
     function isActiveUser() {
-      return request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return request.auth != null && 
+        (!('isActive' in userDoc.data) || userDoc.data.isActive == true) && 
+        !('deletedAt' in userDoc.data);
     }
 
     // Users collection
