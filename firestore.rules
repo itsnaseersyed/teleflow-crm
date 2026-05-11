@@ -56,6 +56,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Lead Import Batches collection
+    match /leadImportBatches/{batchId} {
+      allow read, write: if isAdmin();
+    }
+
     // Calls collection
     match /calls/{callId} {
       // Telecallers can read their own calls, admins can read all

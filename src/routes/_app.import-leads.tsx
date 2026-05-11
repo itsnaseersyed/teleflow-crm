@@ -11,6 +11,7 @@ import {
   serverTimestamp,
   writeBatch,
   doc,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -24,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DropZone, CSVPreview, ImportSummary } from "@/components/csv-upload";
-import { Download, CheckCircle2, AlertCircle, Loader2, Archive } from "lucide-react";
+import { Download, CheckCircle2, AlertCircle, Loader2, Archive, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -132,18 +133,24 @@ function ImportLeadsPage() {
         },
       });
 
-      // Batch write leads
+      // Batch write leads (strip undefined fields — Firestore rejects them)
       const batch = writeBatch(db);
       leads.forEach((lead) => {
         const leadRef = doc(collection(db, "leads"));
-        batch.set(leadRef, {
-          ...lead,
+        const leadData: Record<string, any> = {
           leadStatus: "Unassigned",
           uploadBatchId: batchRef.id,
           uploadSource: "csv_import",
           createdBy: user.uid,
           createdAt: serverTimestamp(),
+        };
+        // Only include defined fields from the parsed lead
+        (Object.keys(lead) as (keyof typeof lead)[]).forEach((key) => {
+          if (lead[key] !== undefined) {
+            leadData[key] = lead[key];
+          }
         });
+        batch.set(leadRef, leadData);
       });
 
       await batch.commit();
@@ -167,6 +174,44 @@ function ImportLeadsPage() {
     onError: (err: any) => {
       toast.error(`Import failed: ${err.message}`);
       setImportStep("preview");
+    },
+  });
+
+  const undoBatchMutation = useMutation({
+    mutationFn: async (batchId: string) => {
+      // 1. Fetch all leads that belong to this batch
+      const leadsQuery = query(collection(db, "leads"), where("uploadBatchId", "==", batchId));
+      const leadsSnapshot = await getDocs(leadsQuery);
+
+      // 2. Delete all those leads in chunks of 500 (Firestore limit for writeBatch)
+      const batches = [];
+      let currentBatch = writeBatch(db);
+      let count = 0;
+
+      leadsSnapshot.docs.forEach((document) => {
+        currentBatch.delete(document.ref);
+        count++;
+        if (count === 500) {
+          batches.push(currentBatch.commit());
+          currentBatch = writeBatch(db);
+          count = 0;
+        }
+      });
+      if (count > 0) {
+        batches.push(currentBatch.commit());
+      }
+      await Promise.all(batches);
+
+      // 3. Delete the batch document itself
+      await deleteDoc(doc(db, "leadImportBatches", batchId));
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["import-batches"] });
+      toast.success("Batch and associated leads deleted successfully");
+    },
+    onError: (err: any) => {
+      toast.error(`Failed to undo batch: ${err.message}`);
     },
   });
 
@@ -430,6 +475,7 @@ function ImportLeadsPage() {
                   <TableHead className="text-right">Duplicates</TableHead>
                   <TableHead className="text-right">Failed</TableHead>
                   <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -447,6 +493,21 @@ function ImportLeadsPage() {
                     <TableCell className="text-right text-red-700">{batch.failedRows}</TableCell>
                     <TableCell className="text-sm">
                       {batch.uploadedAt.toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 px-2"
+                        disabled={undoBatchMutation.isPending}
+                        onClick={() => {
+                          if (confirm("Are you sure you want to undo this upload? This will permanently delete all leads from this batch.")) {
+                            undoBatchMutation.mutate(batch.id);
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
