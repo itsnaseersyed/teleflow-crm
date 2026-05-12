@@ -4,6 +4,9 @@
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "dist/server/server.js",
+    "site": {
+      "bucket": "dist/client"
+    },
   "build": {
     "command": "npm run build"
   }
