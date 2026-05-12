@@ -560,7 +560,7 @@ function LeadDialog({
   const [assignedTo, setAssigned] = useState(initial?.assignedTo || "unassigned");
 
   return (
-    <DialogContent className="sm:max-w-lg">
+    <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
       <DialogHeader>
         <DialogTitle>{initial ? "Edit lead" : "New lead"}</DialogTitle>
       </DialogHeader>
