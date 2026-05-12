@@ -1,5 +1,6 @@
 .env.local
 .env
-src
 *.md
 .git
+node_modules
+dist
