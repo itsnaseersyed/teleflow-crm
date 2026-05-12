@@ -12,9 +12,10 @@ service cloud.firestore {
 
     function isActiveUser() {
       let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return request.auth != null && 
-        (!('isActive' in userDoc.data) || userDoc.data.isActive == true) && 
-        !('deletedAt' in userDoc.data);
+      // deletedAt may be stored as null for active users; only a non-null value means soft-deleted
+      return request.auth != null &&
+        (!('isActive' in userDoc.data) || userDoc.data.isActive == true) &&
+        (!('deletedAt' in userDoc.data) || userDoc.data.deletedAt == null);
     }
 
     // Users collection

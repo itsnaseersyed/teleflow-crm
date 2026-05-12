@@ -106,7 +106,12 @@ function MyLeadsPage() {
   const [filterStatus, setFilterStatus] = useState("Assigned");
 
   // Fetch assigned leads (excluding escalated ones)
-  const { data: leads = [], isLoading } = useQuery({
+  const {
+    data: leads = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ["my-leads", user?.uid, filterStatus],
     enabled: !!user,
     queryFn: async () => {
@@ -276,11 +281,20 @@ function MyLeadsPage() {
         </CardHeader>
 
         <CardContent>
+          {isError && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Could not load leads: {(error as Error)?.message || "Unknown error"}. If this persists,
+                contact your administrator.
+              </AlertDescription>
+            </Alert>
+          )}
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : filteredLeads.length === 0 ? (
+          ) : isError ? null : filteredLeads.length === 0 ? (
             <div className="text-center py-12">
               {stats.total === 0 ? (
                 <>

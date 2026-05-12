@@ -91,7 +91,6 @@ function UsersPage() {
         role: "telecaller",
         isActive: true,
         createdAt: serverTimestamp(),
-        deletedAt: null,
       });
 
       toast.success("Telecaller created successfully!");
