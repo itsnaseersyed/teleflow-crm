@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "vite build && npm run build:node-wrapper",
+    "build:node-wrapper": "node scripts/create-node-wrapper.js",
     "build:dev": "vite build --mode development",
-    "start": "node server-node-wrapper.js",
+    "start": "node server/index.js",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."
