@@ -38,8 +38,8 @@ jobs:
 
       - name: Publish to Cloudflare using Wrangler
         env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           NODE_ENV: production
         run: |
           wrangler --version
-          wrangler publish --site dist/client --name teleflow-crm
+          wrangler deploy --name teleflow-crm --assets dist/client
