@@ -236,7 +236,7 @@ function CallPage() {
       if (hasNext) {
         setTimeout(() => {
           navigate({
-            to: "/app/lead/$leadId/call",
+            to: "/lead/$leadId/call",
             params: { leadId: allLeads[currentIndex + 1].id },
           });
         }, 500);
@@ -297,7 +297,7 @@ function CallPage() {
       setTimeout(() => {
         if (hasNext) {
           navigate({
-            to: "/app/lead/$leadId/call",
+            to: "/lead/$leadId/call",
             params: { leadId: allLeads[currentIndex + 1].id },
           });
         } else {
