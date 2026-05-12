@@ -50,7 +50,12 @@ function ReportsPage() {
       }
 
       // ── Leads last 30 days ────────────────────────────────────────
-      const leadsQ = query(collection(db, "leads"), where("createdAt", ">=", since));
+      let leadsQ;
+      if (role !== "admin") {
+        leadsQ = query(collection(db, "leads"), where("assignedTo", "==", uid));
+      } else {
+        leadsQ = query(collection(db, "leads"), where("createdAt", ">=", since));
+      }
 
       // ── All followups ─────────────────────────────────────────────
       let followQ;
@@ -67,7 +72,13 @@ function ReportsPage() {
       ]);
 
       const calls = callsSnap.docs.map((d) => d.data());
-      const leads = leadsSnap.docs.map((d) => d.data());
+      let leads = leadsSnap.docs.map((d) => d.data());
+      if (role !== "admin") {
+        leads = leads.filter((l: any) => {
+          const ts = l.createdAt?.toDate ? l.createdAt.toDate() : new Date(l.createdAt ?? 0);
+          return ts >= since;
+        });
+      }
       const follows = followSnap.docs.map((d) => d.data());
 
       // ── Daily calls last 30 days ──────────────────────────────────

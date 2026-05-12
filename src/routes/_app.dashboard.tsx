@@ -59,10 +59,24 @@ function Dashboard() {
       }
 
       // ── Calls last 7 days ─────────────────────────────────────────
-      const callsWeekQ = query(collection(db, "calls"), where("createdAt", ">=", startOfWeekDate()));
+      let callsWeekQ;
+      if (role !== "admin") {
+        callsWeekQ = query(
+          collection(db, "calls"),
+          where("telecallerId", "==", uid),
+          where("createdAt", ">=", startOfWeekDate()),
+        );
+      } else {
+        callsWeekQ = query(collection(db, "calls"), where("createdAt", ">=", startOfWeekDate()));
+      }
 
-      // ── All leads ─────────────────────────────────────────────────
-      const leadsQ = query(collection(db, "leads"), orderBy("createdAt", "desc"));
+      // ── Leads (admins: all; telecallers: only assigned to them) ───
+      let leadsQ;
+      if (role !== "admin") {
+        leadsQ = query(collection(db, "leads"), where("assignedTo", "==", uid));
+      } else {
+        leadsQ = query(collection(db, "leads"), orderBy("createdAt", "desc"));
+      }
 
       // ── All followups ─────────────────────────────────────────────
       let followQ;
@@ -81,7 +95,14 @@ function Dashboard() {
 
       const callsToday = callsTodaySnap.size;
       const callsWeek = callsWeekSnap.docs.map((d) => d.data());
-      const leads = leadsSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
+      let leads = leadsSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
+      if (role !== "admin") {
+        leads = leads.sort((a: any, b: any) => {
+          const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+          const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+          return tb - ta;
+        });
+      }
       const follows = followSnap.docs.map((d) => d.data());
 
       // ── Telecaller count (admin only) ─────────────────────────────
@@ -104,6 +125,7 @@ function Dashboard() {
       
       const conversionRate = totalLeads ? Math.round((convertedLeads / totalLeads) * 100) : 0;
       const pendingFollowups = follows.filter((f: any) => f.status === "Pending").length;
+      const interested = callsWeek.filter((c: any) => c.callStatus === "Interested").length;
 
       // Telecaller-specific metrics
       const myAssignedLeads = role !== "admin" ? leads.filter((l: any) => l.assignedTo === uid).length : 0;
@@ -160,6 +182,7 @@ function Dashboard() {
         myAssignedLeads,
         myCompletedLeads,
         myConvertedLeads,
+        interested,
       };
     },
   });

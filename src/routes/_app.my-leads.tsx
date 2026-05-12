@@ -1,12 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   collection,
   query,
   where,
   getDocs,
-  orderBy,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -105,23 +104,19 @@ function MyLeadsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("Assigned");
 
-  // Fetch assigned leads (excluding escalated ones)
+  // All leads assigned to this user (one Firestore query; tab filter is client-side)
   const {
-    data: leads = [],
+    data: assignedLeads = [],
     isLoading,
     isError,
     error,
   } = useQuery({
-    queryKey: ["my-leads", user?.uid, filterStatus],
+    queryKey: ["my-leads", user?.uid],
     enabled: !!user,
     queryFn: async () => {
       if (!user) return [];
 
-      const q = query(
-        collection(db, "leads"),
-        where("assignedTo", "==", user.uid),
-        where("leadStatus", "==", filterStatus),
-      );
+      const q = query(collection(db, "leads"), where("assignedTo", "==", user.uid));
 
       const snap = await getDocs(q);
       const leadsList = snap.docs.map((d) => ({
@@ -131,17 +126,16 @@ function MyLeadsPage() {
         lastCalledAt: d.data().lastCalledAt?.toDate?.() || undefined,
       })) as Lead[];
 
-      // Filter out escalated leads (don't show pending_senior ones in active queue)
-      const filteredByEscalation = leadsList.filter(
-        (lead) => lead.escalationStatus !== "pending_senior"
-      );
-
-      // Sort by createdAt in ascending order (client-side)
-      return filteredByEscalation.sort(
-        (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
-      );
+      return leadsList.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     },
   });
+
+  const leads = useMemo(() => {
+    return assignedLeads
+      .filter((lead) => lead.leadStatus === filterStatus)
+      .filter((lead) => lead.escalationStatus !== "pending_senior")
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }, [assignedLeads, filterStatus]);
 
   // Fetch converted leads sourced by current user (closed by senior)
   const { data: convertedLeads = [], isLoading: convertedLoading } = useQuery({
@@ -150,21 +144,21 @@ function MyLeadsPage() {
     queryFn: async () => {
       if (!user) return [];
 
-      const q = query(
-        collection(db, "leads"),
-        where("sourcedBy", "==", user.uid),
-        where("escalationStatus", "==", "closed_by_senior"),
-        where("leadStatus", "==", "Completed"),
-        orderBy("createdAt", "desc")
-      );
+      const q = query(collection(db, "leads"), where("sourcedBy", "==", user.uid));
 
       const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-        createdAt: d.data().createdAt?.toDate?.() || new Date(),
-        lastCalledAt: d.data().lastCalledAt?.toDate?.() || undefined,
-      })) as Lead[];
+      return snap.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+          createdAt: d.data().createdAt?.toDate?.() || new Date(),
+          lastCalledAt: d.data().lastCalledAt?.toDate?.() || undefined,
+        }))
+        .filter(
+          (l) =>
+            l.escalationStatus === "closed_by_senior" && l.leadStatus === "Completed"
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) as Lead[];
     },
   });
 
@@ -179,18 +173,20 @@ function MyLeadsPage() {
     );
   });
 
-  // Calculate statistics
+  const notPendingEscalation = (l: Lead) => l.escalationStatus !== "pending_senior";
+
+  // Calculate statistics (across all assigned leads, excluding pending escalation queue)
   const stats = {
-    total: leads.length,
-    pending: leads.filter((l) => l.leadStatus === "Assigned").length,
-    inProgress: leads.filter((l) => l.leadStatus === "In Progress").length,
-    completed: leads.filter((l) => l.leadStatus === "Completed").length,
+    total: assignedLeads.filter(notPendingEscalation).length,
+    pending: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Assigned").length,
+    inProgress: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "In Progress").length,
+    completed: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Completed").length,
     converted: convertedLeads.length,
   };
 
   const handleStartCall = (leadId: string) => {
     navigate({
-      to: "/app/lead/$leadId/call",
+      to: "/lead/$leadId/call",
       params: { leadId },
     });
   };

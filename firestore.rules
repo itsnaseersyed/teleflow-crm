@@ -36,11 +36,15 @@ service cloud.firestore {
 
     // Leads collection
     match /leads/{leadId} {
-      // Users can read leads that are assigned to them or created by them
-      // Admins can read all leads
-      allow read: if request.auth != null && isActiveUser() && (
+      // Read: document-field checks only (no get() on /users), so list queries like
+      // where("assignedTo","==",uid) are provably safe for Firestore. Inactive/deleted
+      // accounts are blocked at sign-in (client) and refresh tokens revoked on delete.
+      // Users can read leads they created, are assigned to, or sourced (escalation).
+      // Admins can read all leads.
+      allow read: if request.auth != null && (
         resource.data.createdBy == request.auth.uid ||
         resource.data.assignedTo == request.auth.uid ||
+        resource.data.sourcedBy == request.auth.uid ||
         isAdmin()
       );
       

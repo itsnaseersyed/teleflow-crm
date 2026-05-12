@@ -7,6 +7,7 @@ import {
   where,
   getDocs,
   doc,
+  getDoc,
   updateDoc,
   addDoc,
   serverTimestamp,
@@ -125,18 +126,15 @@ function CallPage() {
     queryKey: ["lead", leadId],
     enabled: !!leadId && !!user,
     queryFn: async () => {
-      const snap = await getDocs(
-        query(collection(db, "leads"), where("id", "==", leadId)),
-      );
+      const snap = await getDoc(doc(db, "leads", leadId));
 
-      if (snap.empty) throw new Error("Lead not found");
+      if (!snap.exists()) throw new Error("Lead not found");
 
-      const leadDoc = snap.docs[0];
       return {
-        id: leadDoc.id,
-        ...(leadDoc.data() as any),
-        createdAt: leadDoc.data().createdAt?.toDate?.() || new Date(),
-        lastCalledAt: leadDoc.data().lastCalledAt?.toDate?.() || undefined,
+        id: snap.id,
+        ...(snap.data() as any),
+        createdAt: snap.data().createdAt?.toDate?.() || new Date(),
+        lastCalledAt: snap.data().lastCalledAt?.toDate?.() || undefined,
       } as Lead;
     },
   });
@@ -148,18 +146,17 @@ function CallPage() {
     queryFn: async () => {
       if (!user) return [];
 
-      const q = query(
-        collection(db, "leads"),
-        where("assignedTo", "==", user.uid),
-        where("leadStatus", "==", "Assigned"),
-      );
+      const q = query(collection(db, "leads"), where("assignedTo", "==", user.uid));
 
       const snap = await getDocs(q);
-      const leadsList = snap.docs.map((d) => ({
-        id: d.id,
-        customerName: d.data().customerName,
-        createdAt: d.data().createdAt?.toDate?.() || new Date(),
-      }));
+      const leadsList = snap.docs
+        .map((d) => ({
+          id: d.id,
+          customerName: d.data().customerName,
+          leadStatus: d.data().leadStatus,
+          createdAt: d.data().createdAt?.toDate?.() || new Date(),
+        }))
+        .filter((l) => l.leadStatus === "Assigned");
 
       // Sort by createdAt in ascending order (client-side)
       return leadsList.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map(({ id, customerName }) => ({ id, customerName }));
