@@ -1,6 +1,7 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
+  "buildCommand": "npm run build && npm run build:node-wrapper",
+  "outputDirectory": "dist/server",
+  "devCommand": "npm run dev",
   "env": {
     "NODE_ENV": "production"
   }
