@@ -15,8 +15,6 @@ import {
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
-import { acquireLock, releaseLock, refreshLock, checkLockStatus, formatRemainingLockTime, type LockStatus } from "@/lib/lead-lock";
-import { useLockRealtime } from "@/lib/lock-realtime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -116,10 +114,7 @@ function CallPage() {
   const [selectedSenior, setSelectedSenior] = useState("");
   const [escalationNotes, setEscalationNotes] = useState("");
   
-  // Lock management
-  const [lockAcquired, setLockAcquired] = useState(false);
-  const lockRefreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const { lockStatus, loading: lockLoading } = useLockRealtime(leadId, user?.uid);
+
 
   // Fetch current lead
   const { data: currentLead, isLoading: leadLoading } = useQuery({
@@ -178,55 +173,7 @@ function CallPage() {
   const hasNext = currentIndex < allLeads.length - 1;
   const hasPrev = currentIndex > 0;
 
-  // Acquire lock when component mounts
-  useEffect(() => {
-    if (!leadId || !user || !user.uid || lockAcquired || lockLoading) return;
 
-    const acquireLockAsync = async () => {
-      const success = await acquireLock(leadId, user.uid, user.displayName || "User");
-      if (success) {
-        setLockAcquired(true);
-        toast.success("Lead locked for editing");
-
-        // Set up lock refresh interval (every 1 minute)
-        const interval = setInterval(async () => {
-          await refreshLock(leadId, user.uid);
-        }, 60000); // 60 seconds
-
-        lockRefreshIntervalRef.current = interval;
-      } else {
-        toast.error("This lead is being handled by another user");
-        // Navigate back after 2 seconds
-        setTimeout(() => navigate({ to: "/my-leads" }), 2000);
-      }
-    };
-
-    acquireLockAsync();
-
-    return () => {
-      if (lockRefreshIntervalRef.current) {
-        clearInterval(lockRefreshIntervalRef.current);
-      }
-    };
-  }, [leadId, user, lockAcquired, lockLoading]);
-
-  // Release lock when component unmounts or when leaving page
-  const handleReleaseLock = async () => {
-    if (lockAcquired && leadId && user?.uid) {
-      if (lockRefreshIntervalRef.current) {
-        clearInterval(lockRefreshIntervalRef.current);
-      }
-      await releaseLock(leadId, user.uid);
-      setLockAcquired(false);
-    }
-  };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      handleReleaseLock();
-    };
-  }, []);
 
   // Handle call save
   const saveMutation = useMutation({
@@ -283,8 +230,7 @@ function CallPage() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["lead", leadId] });
 
-      // Release lock before navigating
-      await handleReleaseLock();
+
 
       // Auto go to next lead
       if (hasNext) {
@@ -345,8 +291,7 @@ function CallPage() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["user-leads"] });
 
-      // Release lock before navigating
-      await handleReleaseLock();
+
 
       setShowEscalationDialog(false);
       setTimeout(() => {
@@ -439,31 +384,7 @@ function CallPage() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      {/* Lock Status Warning */}
-      {lockStatus.isLocked && !lockStatus.isLockedByCurrentUser && (
-        <Alert variant="destructive" className="flex items-start gap-3">
-          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-          <AlertDescription>
-            <p className="font-semibold">Lead Locked</p>
-            <p className="text-sm">
-              This lead is currently being handled by <strong>{lockStatus.lockedByName}</strong> since{" "}
-              {lockStatus.lockedAt?.toLocaleTimeString()}. Please try another lead.
-            </p>
-          </AlertDescription>
-        </Alert>
-      )}
 
-      {lockStatus.isLockedByCurrentUser && (
-        <Alert className="flex items-start gap-3 bg-amber-50 border-amber-200">
-          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-amber-600" />
-          <AlertDescription className="text-amber-900">
-            <p className="font-semibold">You are handling this lead</p>
-            <p className="text-sm">
-              Lock expires in {formatRemainingLockTime(lockStatus.lockExpiresAt)}
-            </p>
-          </AlertDescription>
-        </Alert>
-      )}
 
       {/* Header with Navigation */}
       <div className="flex items-center justify-between">
@@ -612,7 +533,6 @@ function CallPage() {
                     <Button
                       onClick={handleCallStart}
                       className="w-full bg-gradient-accent text-white h-20 text-lg font-semibold gap-2"
-                      disabled={lockStatus.isLocked && !lockStatus.isLockedByCurrentUser}
                     >
                       <Phone className="h-5 w-5" />
                       Call Now
@@ -630,7 +550,6 @@ function CallPage() {
                 <Select
                   value={callStatus}
                   onValueChange={setCallStatus}
-                  disabled={lockStatus.isLocked && !lockStatus.isLockedByCurrentUser}
                 >
                   <SelectTrigger id="call-status">
                     <SelectValue placeholder="Select call status..." />
@@ -658,7 +577,6 @@ function CallPage() {
                   onChange={(e) => setFeedbackNotes(e.target.value)}
                   rows={4}
                   className="resize-none"
-                  disabled={lockStatus.isLocked && !lockStatus.isLockedByCurrentUser}
                 />
               </div>
 
@@ -673,7 +591,6 @@ function CallPage() {
                   type="date"
                   value={followUpDate}
                   onChange={(e) => setFollowUpDate(e.target.value)}
-                  disabled={lockStatus.isLocked && !lockStatus.isLockedByCurrentUser}
                 />
               </div>
 
@@ -702,11 +619,7 @@ function CallPage() {
                 
                 <Button
                   onClick={handleSaveCall}
-                  disabled={
-                    saveMutation.isPending ||
-                    !callStatus ||
-                    (lockStatus.isLocked && !lockStatus.isLockedByCurrentUser)
-                  }
+                  disabled={saveMutation.isPending || !callStatus}
                   className="flex-1 bg-gradient-accent text-white gap-2"
                 >
                   {saveMutation.isPending ? (

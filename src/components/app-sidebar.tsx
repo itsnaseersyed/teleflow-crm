@@ -11,7 +11,6 @@ import {
   Headphones,
   FileUp,
   Send,
-  Lock,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -31,7 +30,6 @@ const adminNav = [
   { to: "/leads", label: "All Leads", icon: Users },
   { to: "/import-leads", label: "Import Leads", icon: FileUp },
   { to: "/lead-assignment", label: "Lead Assignment", icon: Send },
-  { to: "/locked-leads", label: "Locked Leads", icon: Lock },
   { to: "/users", label: "Users", icon: UserCog },
 ] as const;
 

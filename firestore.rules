@@ -52,42 +52,12 @@ service cloud.firestore {
       allow create: if request.auth != null && isActiveUser();
       
       // Admins can update any lead without restrictions
-      // Non-admins can update leads if they are the assigned/creator/source user AND:
-      //   1. They already have an active lock on the lead (for refreshing the lock or general edits), OR
-      //   2. They are acquiring a lock (when the lead is not locked or the lock is expired), OR
-      //   3. They are releasing their own lock (setting lockedBy to null)
+      // Non-admins can update leads if they are the assigned/creator/source user
       allow update: if request.auth != null && isActiveUser() && (
         isAdmin() ||
-        (
-          (
-            resource.data.createdBy == request.auth.uid ||
-            resource.data.assignedTo == request.auth.uid ||
-            resource.data.sourcedBy == request.auth.uid
-          ) && (
-            // 1. They currently hold an active lock on the lead
-            (
-              resource.data.lockedBy == request.auth.uid && 
-              resource.data.lockExpiresAt > request.time
-            ) ||
-            // 2. They are acquiring a lock (not locked or expired)
-            (
-              request.resource.data.lockedBy == request.auth.uid &&
-              (
-                !('lockedBy' in resource.data) ||
-                resource.data.lockedBy == null ||
-                resource.data.isLocked == false ||
-                !('lockExpiresAt' in resource.data) ||
-                resource.data.lockExpiresAt == null ||
-                resource.data.lockExpiresAt < request.time
-              )
-            ) ||
-            // 3. They are releasing their own lock
-            (
-              request.resource.data.lockedBy == null && 
-              resource.data.lockedBy == request.auth.uid
-            )
-          )
-        )
+        resource.data.createdBy == request.auth.uid ||
+        resource.data.assignedTo == request.auth.uid ||
+        resource.data.sourcedBy == request.auth.uid
       );
       
       // Only admins can delete

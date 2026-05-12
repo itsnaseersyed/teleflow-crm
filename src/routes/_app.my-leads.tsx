@@ -38,7 +38,6 @@ import {
   Target,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useLockRealtime } from "@/lib/lock-realtime";
 
 export const Route = createFileRoute("/_app/my-leads")({
   component: MyLeadsPage,
@@ -68,35 +67,7 @@ interface Lead {
   escalationNotes?: string; // Notes from junior
 }
 
-// Lock Status Badge Component
-function LockStatusBadge({ leadId, currentUserId }: { leadId: string; currentUserId: string }) {
-  const { lockStatus } = useLockRealtime(leadId, currentUserId);
 
-  if (!lockStatus.isLocked) {
-    // Green: Available
-    return (
-      <div className="h-2 w-2 rounded-full bg-green-500" title="Available" />
-    );
-  }
-
-  if (lockStatus.isLockedByCurrentUser) {
-    // Yellow: Locked by you
-    return (
-      <div
-        className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse"
-        title="Locked by you"
-      />
-    );
-  }
-
-  // Red: Locked by another user
-  return (
-    <div
-      className="h-2 w-2 rounded-full bg-red-500"
-      title={`Locked by ${lockStatus.lockedByName}`}
-    />
-  );
-}
 
 function MyLeadsPage() {
   const { user } = useAuth();
@@ -385,11 +356,6 @@ function MyLeadsPage() {
                             {lead.leadStatus === "In Progress" && "In Progress"}
                             {lead.leadStatus === "Completed" && "Completed"}
                           </p>
-                          {/* Lock Status Badge */}
-                          <LockStatusBadge
-                            leadId={lead.id}
-                            currentUserId={user?.uid || ""}
-                          />
                         </div>
                         <Button
                           size="sm"

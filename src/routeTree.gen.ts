@@ -18,7 +18,6 @@ import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppReportsRouteImport } from './routes/_app.reports'
 import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppMyLeadsRouteImport } from './routes/_app.my-leads'
-import { Route as AppLockedLeadsRouteImport } from './routes/_app.locked-leads'
 import { Route as AppLeadsRouteImport } from './routes/_app.leads'
 import { Route as AppLeadAssignmentRouteImport } from './routes/_app.lead-assignment'
 import { Route as AppImportLeadsRouteImport } from './routes/_app.import-leads'
@@ -71,11 +70,6 @@ const AppMyLeadsRoute = AppMyLeadsRouteImport.update({
   path: '/my-leads',
   getParentRoute: () => AppRoute,
 } as any)
-const AppLockedLeadsRoute = AppLockedLeadsRouteImport.update({
-  id: '/locked-leads',
-  path: '/locked-leads',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppLeadsRoute = AppLeadsRouteImport.update({
   id: '/leads',
   path: '/leads',
@@ -121,7 +115,6 @@ export interface FileRoutesByFullPath {
   '/import-leads': typeof AppImportLeadsRoute
   '/lead-assignment': typeof AppLeadAssignmentRoute
   '/leads': typeof AppLeadsRoute
-  '/locked-leads': typeof AppLockedLeadsRoute
   '/my-leads': typeof AppMyLeadsRoute
   '/profile': typeof AppProfileRoute
   '/reports': typeof AppReportsRoute
@@ -139,7 +132,6 @@ export interface FileRoutesByTo {
   '/import-leads': typeof AppImportLeadsRoute
   '/lead-assignment': typeof AppLeadAssignmentRoute
   '/leads': typeof AppLeadsRoute
-  '/locked-leads': typeof AppLockedLeadsRoute
   '/my-leads': typeof AppMyLeadsRoute
   '/profile': typeof AppProfileRoute
   '/reports': typeof AppReportsRoute
@@ -159,7 +151,6 @@ export interface FileRoutesById {
   '/_app/import-leads': typeof AppImportLeadsRoute
   '/_app/lead-assignment': typeof AppLeadAssignmentRoute
   '/_app/leads': typeof AppLeadsRoute
-  '/_app/locked-leads': typeof AppLockedLeadsRoute
   '/_app/my-leads': typeof AppMyLeadsRoute
   '/_app/profile': typeof AppProfileRoute
   '/_app/reports': typeof AppReportsRoute
@@ -179,7 +170,6 @@ export interface FileRouteTypes {
     | '/import-leads'
     | '/lead-assignment'
     | '/leads'
-    | '/locked-leads'
     | '/my-leads'
     | '/profile'
     | '/reports'
@@ -197,7 +187,6 @@ export interface FileRouteTypes {
     | '/import-leads'
     | '/lead-assignment'
     | '/leads'
-    | '/locked-leads'
     | '/my-leads'
     | '/profile'
     | '/reports'
@@ -216,7 +205,6 @@ export interface FileRouteTypes {
     | '/_app/import-leads'
     | '/_app/lead-assignment'
     | '/_app/leads'
-    | '/_app/locked-leads'
     | '/_app/my-leads'
     | '/_app/profile'
     | '/_app/reports'
@@ -298,13 +286,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMyLeadsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/locked-leads': {
-      id: '/_app/locked-leads'
-      path: '/locked-leads'
-      fullPath: '/locked-leads'
-      preLoaderRoute: typeof AppLockedLeadsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/leads': {
       id: '/_app/leads'
       path: '/leads'
@@ -363,7 +344,6 @@ interface AppRouteChildren {
   AppImportLeadsRoute: typeof AppImportLeadsRoute
   AppLeadAssignmentRoute: typeof AppLeadAssignmentRoute
   AppLeadsRoute: typeof AppLeadsRoute
-  AppLockedLeadsRoute: typeof AppLockedLeadsRoute
   AppMyLeadsRoute: typeof AppMyLeadsRoute
   AppProfileRoute: typeof AppProfileRoute
   AppReportsRoute: typeof AppReportsRoute
@@ -379,7 +359,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppImportLeadsRoute: AppImportLeadsRoute,
   AppLeadAssignmentRoute: AppLeadAssignmentRoute,
   AppLeadsRoute: AppLeadsRoute,
-  AppLockedLeadsRoute: AppLockedLeadsRoute,
   AppMyLeadsRoute: AppMyLeadsRoute,
   AppProfileRoute: AppProfileRoute,
   AppReportsRoute: AppReportsRoute,
