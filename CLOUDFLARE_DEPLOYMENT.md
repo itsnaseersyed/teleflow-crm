@@ -57,6 +57,15 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
 VITE_FIREBASE_APP_ID=your-app-id
 ```
 
+### CI / Automated deploy (recommended)
+
+You can add a GitHub Actions workflow that builds and publishes the static site and Worker automatically on push to `main`.
+
+1. Create a GitHub secret called `CF_API_TOKEN` with a Cloudflare API token that has `Workers:Edit` and `Account:Pages` (or full Workers/Pages) permissions.
+2. The included workflow `.github/workflows/deploy-cloudflare.yml` will run `npm ci`, `npm run build` and then `wrangler publish --site dist/client --name teleflow-crm`.
+
+This ensures `dist/client` (static assets) is uploaded and the Worker is deployed together.
+
 ## Step 6: Custom Domain (Optional)
 
 In your Cloudflare Dashboard:
