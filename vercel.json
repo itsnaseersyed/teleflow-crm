@@ -1,8 +1,16 @@
 {
   "buildCommand": "npm run build && npm run build:node-wrapper",
-  "outputDirectory": "dist/server",
-  "devCommand": "npm run dev",
   "env": {
     "NODE_ENV": "production"
-  }
+  },
+  "routes": [
+    {
+      "src": "^/api/.*",
+      "dest": "/dist/server/index.js"
+    },
+    {
+      "src": "^/(?!api).*",
+      "dest": "/dist/server/index.js"
+    }
+  ]
 }
