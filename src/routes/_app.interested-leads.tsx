@@ -1,18 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  doc,
-  updateDoc,
-  orderBy,
-  serverTimestamp,
-} from "firebase/firestore";
+import { useQuery } from "@tanstack/react-query";
+import { collection, query, doc, getDocs } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/hooks/useAuth";
+import { useLeadsPaginated, useLeadMutations } from "@/hooks/useLeads";
+import { leadService } from "@/services/leadService";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,7 +69,6 @@ type UserType = {
 function InterestedLeadsPage() {
   const { role, user } = useAuth();
   const navigate = useNavigate();
-  const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
 
@@ -86,6 +78,19 @@ function InterestedLeadsPage() {
       navigate({ to: "/my-leads" });
     }
   }, [role, navigate]);
+
+  // Use paginated hook
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading
+  } = useLeadsPaginated({ status: "Interested" });
+
+  const { updateLead, updateStatus } = useLeadMutations();
+
+  const leads = data?.pages.flatMap((page: any) => page.leads) ?? [];
 
   // Fetch all users (telecallers) to map names
   const { data: users = [] } = useQuery({
@@ -105,68 +110,6 @@ function InterestedLeadsPage() {
   // Create lookup map of userId -> fullName
   const usersMap = new Map(users.map((u) => [u.id, u.fullName]));
 
-  // Fetch interested leads
-  const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["interested-leads"],
-    queryFn: async () => {
-      const q = query(
-        collection(db, "leads"),
-        where("leadStatus", "==", "Interested")
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate?.() || new Date(),
-        lastCalledAt: doc.data().lastCalledAt?.toDate?.() || undefined,
-      })) as Lead[];
-    },
-    enabled: role === "admin",
-  });
-
-  // Update lead mutation
-  const updateLeadMutation = useMutation({
-    mutationFn: async (payload: Partial<Lead> & { id: string }) => {
-      const { id, ...updates } = payload;
-      await updateDoc(doc(db, "leads", id), {
-        ...updates,
-        lastModifiedAt: serverTimestamp(),
-      });
-    },
-    onSuccess: () => {
-      toast.success("Lead updated successfully!");
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["interested-leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      setEditingLead(null);
-    },
-    onError: (e: any) => {
-      toast.error(`Update failed: ${e.message}`);
-    },
-  });
-
-  // Quick mark completed mutation
-  const markCompletedMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await updateDoc(doc(db, "leads", id), {
-        leadStatus: "Completed",
-        lastCallStatus: "Converted",
-        lastModifiedAt: serverTimestamp(),
-      });
-    },
-    onSuccess: () => {
-      toast.success("Lead marked as Completed and closed!");
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["interested-leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-    },
-    onError: (e: any) => {
-      toast.error(`Operation failed: ${e.message}`);
-    },
-  });
-
   // Client-side search and filters
   const filtered = leads.filter((l) => {
     if (!q) return true;
@@ -179,6 +122,7 @@ function InterestedLeadsPage() {
       telecallerName.includes(s)
     );
   });
+
 
   if (isLoading) {
     return (
@@ -273,12 +217,16 @@ function InterestedLeadsPage() {
                   <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-muted">
                     <div className="flex items-center gap-1.5">
                       <Clock className="h-3.5 w-3.5" />
-                      <span>Sourced: {lead.createdAt.toLocaleDateString()}</span>
+                      <span>Sourced: { (lead.createdAt as any)?.toDate?.() 
+                        ? (lead.createdAt as any).toDate().toLocaleDateString() 
+                        : lead.createdAt ? new Date(lead.createdAt).toLocaleDateString() : "N/A" }</span>
                     </div>
                     {lead.lastCalledAt && (
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3.5 w-3.5" />
-                        <span>Called: {lead.lastCalledAt.toLocaleDateString()}</span>
+                        <span>Called: { (lead.lastCalledAt as any).toDate?.() 
+                          ? (lead.lastCalledAt as any).toDate().toLocaleDateString() 
+                          : new Date(lead.lastCalledAt).toLocaleDateString() }</span>
                       </div>
                     )}
                   </div>
@@ -319,18 +267,35 @@ function InterestedLeadsPage() {
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => markCompletedMutation.mutate(lead.id)}
-                      disabled={markCompletedMutation.isPending}
+                      onClick={() => updateStatus.mutate({
+                        leadId: lead.id,
+                        oldStatus: lead.leadStatus,
+                        newStatus: "Converted"
+                      })}
+                      disabled={updateStatus.isPending}
                       className="flex-1 bg-gradient-accent text-white gap-1.5 text-xs h-9 shadow-soft"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
-                      Mark Completed
+                      Mark Converted
                     </Button>
                   </div>
                 </CardFooter>
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {hasNextPage && (
+        <div className="flex justify-center pt-4">
+          <Button
+            variant="outline"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="w-full sm:w-auto"
+          >
+            {isFetchingNextPage ? "Loading more..." : "Load More"}
+          </Button>
         </div>
       )}
 
@@ -426,19 +391,22 @@ function InterestedLeadsPage() {
               </Button>
               <Button
                 onClick={() =>
-                  updateLeadMutation.mutate({
-                    id: editingLead.id,
-                    customerName: editingLead.customerName,
-                    mobileNumber: editingLead.mobileNumber,
-                    city: editingLead.city,
-                    leadStatus: editingLead.leadStatus,
-                    feedbackNotes: editingLead.feedbackNotes,
+                  updateLead.mutate({
+                    leadId: editingLead.id,
+                    updates: {
+                      customerName: editingLead.customerName,
+                      mobileNumber: editingLead.mobileNumber,
+                      city: editingLead.city,
+                      leadStatus: editingLead.leadStatus,
+                      feedbackNotes: editingLead.feedbackNotes,
+                    },
+                    oldStatus: leads.find(l => l.id === editingLead.id)?.leadStatus
                   })
                 }
-                disabled={updateLeadMutation.isPending}
+                disabled={updateLead.isPending}
                 className="bg-gradient-accent text-white"
               >
-                {updateLeadMutation.isPending ? "Saving..." : "Save Changes"}
+                {updateLead.isPending ? "Saving..." : "Save Changes"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -1,23 +1,31 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  collection,
-  query,
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  doc, 
+  updateDoc, 
+  setDoc, 
+  deleteDoc, 
+  writeBatch,
   orderBy,
-  getDocs,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  doc,
-  where,
+  limit,
+  startAfter,
+  getCountFromServer,
+  serverTimestamp,
+  increment
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/hooks/useAuth";
+import { leadService } from "@/services/leadService";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -30,14 +38,19 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { LEAD_STATUSES, statusBadgeClass } from "@/lib/lead-utils";
-import { Plus, Search, Phone, MessageCircle, Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { 
+  Plus, Search, Phone, MessageCircle, Trash2, Loader2, Inbox, 
+  CheckCircle2, Filter, AlertTriangle, ShieldAlert, FolderArchive, 
+  Calendar, FileText, ChevronRight, Layers, ArrowLeft, MoreVertical,
+  History
+} from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
-import { writeBatch } from "firebase/firestore";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 export const Route = createFileRoute("/_app/leads")({
   component: LeadsPage,
@@ -52,610 +65,436 @@ type Lead = {
   feedbackNotes?: string;
   followUpDate?: string;
   assignedTo?: string;
-  createdAt: Date;
+  createdAt: any;
   createdBy: string;
   uploadBatchId?: string;
-  // Escalation fields
-  sourcedBy?: string; // Junior who sourced the lead
-  handledBy?: string; // Senior who closed it
-  escalationStatus?: "none" | "pending_senior" | "closed_by_senior"; // Escalation status
-  escalatedAt?: Date; // When escalated
-  escalationNotes?: string; // Notes from junior
+  escalationStatus?: "none" | "pending_senior" | "closed_by_senior";
 };
 
-type LeadImportBatch = {
+interface ImportBatch {
   id: string;
-  dayIdentifier?: string;
-  batchStatus?: string;
-  uploadedAt?: Date;
-};
+  fileName: string;
+  uploadedAt: any;
+  importedRows: number;
+  batchStatus?: "active" | "completed" | "archived";
+}
+
+const PAGE_SIZE = 50;
 
 function LeadsPage() {
-  const { role, user } = useAuth();
+  const { role, user, isAdmin } = useAuth();
   const qc = useQueryClient();
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<string>("all");
-  const [escalationFilter, setEscalationFilter] = useState<string>("all");
-  const [editing, setEditing] = useState<Lead | null>(null);
-  const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const parentRef = useRef<HTMLDivElement>(null);
+  
+  // VIEW MODE: 'batches' or 'leads'
+  const [viewMode, setViewMode] = useState<'batches' | 'leads'>('batches');
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [telecallerFilter, setTelecallerFilter] = useState<string>("all");
+  
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isNuclearOpen, setIsNuclearOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
 
-  const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["leads"],
+  // 1. Fetch Batches
+  const { data: batches = [], isLoading: batchesLoading } = useQuery({
+    queryKey: ["import-batches-list"],
     queryFn: async () => {
-      const q = query(collection(db, "leads"), orderBy("createdAt", "desc"));
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate?.() || new Date(),
-      })) as Lead[];
-    },
+      const q = query(collection(db, "leadImportBatches"));
+      const snap = await getDocs(q);
+      return snap.docs
+        .map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            uploadedAt: data.uploadedAt?.toDate?.() || new Date()
+          } as ImportBatch;
+        })
+        .filter(b => b.batchStatus !== "archived")
+        .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+    }
   });
 
-  const { data: batches = [] } = useQuery({
-    queryKey: ["import-batches"],
-    queryFn: async () => {
-      const q = query(collection(db, "leadImportBatches"), orderBy("uploadedAt", "desc"));
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        uploadedAt: doc.data().uploadedAt?.toDate?.() || new Date(),
-      })) as LeadImportBatch[];
-    },
-  });
-
+  // 2. Fetch Telecallers
   const { data: telecallers = [] } = useQuery({
-    queryKey: ["telecallers"],
+    queryKey: ["telecallers-lookup"],
     queryFn: async () => {
       const q = query(collection(db, "users"), where("role", "==", "telecaller"));
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map((d) => ({ id: d.id, name: d.data().fullName }));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, fullName: d.data().fullName })) as any[];
+    }
+  });
+
+  // 3. Total Count (Scoped to Batch if selected)
+  const { data: totalLeadsCount = 0 } = useQuery({
+    queryKey: ["leads-total-count", selectedBatchId, statusFilter, telecallerFilter],
+    queryFn: async () => {
+      let q = query(collection(db, "leads"));
+      if (selectedBatchId) q = query(q, where("uploadBatchId", "==", selectedBatchId));
+      if (statusFilter !== "all") q = query(q, where("leadStatus", "==", statusFilter));
+      if (telecallerFilter !== "all") q = query(q, where("assignedTo", "==", telecallerFilter));
+      const snap = await getCountFromServer(q);
+      return snap.data().count;
+    }
+  });
+
+  // 4. Infinite Query
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: leadsLoading,
+  } = useInfiniteQuery({
+    queryKey: ["leads-infinite", selectedBatchId, statusFilter, telecallerFilter],
+    initialPageParam: undefined as any,
+    enabled: viewMode === 'leads',
+    queryFn: async ({ pageParam }) => {
+      let q = query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(PAGE_SIZE));
+      if (selectedBatchId) q = query(q, where("uploadBatchId", "==", selectedBatchId));
+      if (statusFilter !== "all") q = query(q, where("leadStatus", "==", statusFilter));
+      if (telecallerFilter !== "all") q = query(q, where("assignedTo", "==", telecallerFilter));
+      if (pageParam) q = query(q, startAfter(pageParam));
+      const snap = await getDocs(q);
+      return {
+        leads: snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.() || new Date() })) as Lead[],
+        lastDoc: snap.docs[snap.docs.length - 1] || null,
+      };
     },
-    enabled: role === "admin",
+    getNextPageParam: (lastPage) => lastPage.lastDoc || undefined,
   });
 
-  const filtered = leads.filter((l) => {
-    if (status !== "all" && l.leadStatus !== status) return false;
-    if (escalationFilter !== "all" && l.escalationStatus !== escalationFilter) return false;
-    if (!q) return true;
-    const s = q.toLowerCase();
-    return (
-      l.customerName.toLowerCase().includes(s) ||
-      l.mobileNumber.includes(q) ||
-      (l.city || "").toLowerCase().includes(s)
-    );
+  const allLeads = useMemo(() => {
+    const fetched = data?.pages.flatMap((page) => page.leads) ?? [];
+    if (!searchQuery) return fetched;
+    const s = searchQuery.toLowerCase();
+    return fetched.filter(l => l.customerName?.toLowerCase().includes(s) || l.mobileNumber?.includes(s) || l.city?.toLowerCase().includes(s));
+  }, [data, searchQuery]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: hasNextPage ? allLeads.length + 1 : allLeads.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 85,
+    overscan: 10,
   });
 
-  const upsert = useMutation({
+  useEffect(() => {
+    const [lastItem] = [...rowVirtualizer.getVirtualItems()].reverse();
+    if (lastItem && lastItem.index >= allLeads.length - 1 && hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, allLeads.length, rowVirtualizer.getVirtualItems(), fetchNextPage]);
+
+  // Mutations
+  const createMutation = useMutation({
     mutationFn: async (form: Partial<Lead>) => {
-      if (editing) {
-        // Check if this is a senior closing an escalated lead
-        const leadToUpdate = leads.find((l) => l.id === editing.id);
-        if (
-          leadToUpdate?.escalationStatus === "pending_senior" &&
-          leadToUpdate?.sourcedBy &&
-          form.leadStatus === "Completed"
-        ) {
-          // Senior closed the deal - mark as closed_by_senior and assign back to junior
-          await updateDoc(doc(db, "leads", editing.id), {
-            ...form,
-            escalationStatus: "closed_by_senior",
-            handledBy: user?.uid, // Mark which senior closed it
-            assignedTo: leadToUpdate.sourcedBy, // Assign back to junior who sourced it
-          });
-        } else {
-          await updateDoc(doc(db, "leads", editing.id), form);
-        }
-      } else {
-        const leadRef = doc(collection(db, "leads"));
-        await setDoc(leadRef, {
-          ...form,
-          createdBy: user?.uid,
-          createdAt: new Date(),
-        });
-      }
+      const docRef = doc(collection(db, "leads"));
+      await setDoc(docRef, { 
+        ...form, 
+        createdBy: user?.uid, 
+        createdAt: serverTimestamp(),
+        leadStatus: form.leadStatus || "New Lead"
+      });
+      // Increment count
+      await updateDoc(doc(db, "stats", "global"), {
+        totalLeads: increment(1),
+        unassignedLeads: increment(1),
+        lastUpdated: serverTimestamp()
+      });
     },
     onSuccess: () => {
-      toast.success(editing ? "Lead updated" : "Lead added");
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["followups"] });
-      setOpen(false);
-      setEditing(null);
+      toast.success("Lead created");
+      qc.invalidateQueries({ queryKey: ["leads-infinite"] });
+      qc.invalidateQueries({ queryKey: ["leads-total-count"] });
+      setIsDialogOpen(false);
     },
-    onError: (e: any) => toast.error(e.message),
-  });
-
-  const del = useMutation({
-    mutationFn: async (id: string) => {
-      await deleteDoc(doc(db, "leads", id));
-    },
-    onSuccess: () => {
-      toast.success("Lead deleted");
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["followups"] });
-    },
-    onError: (e: any) => toast.error(e.message),
   });
 
   const bulkDel = useMutation({
     mutationFn: async (ids: string[]) => {
       const batch = writeBatch(db);
-      ids.forEach((id) => {
-        batch.delete(doc(db, "leads", id));
-      });
+      ids.forEach(id => batch.delete(doc(db, "leads", id)));
       await batch.commit();
     },
     onSuccess: () => {
-      toast.success(`${selected.size} lead(s) deleted`);
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["followups"] });
-      setSelected(new Set());
+      toast.success(`Deleted ${selectedLeads.size} leads`);
+      setSelectedLeads(new Set());
+      qc.invalidateQueries({ queryKey: ["leads-infinite"] });
+      qc.invalidateQueries({ queryKey: ["leads-total-count"] });
     },
-    onError: (e: any) => toast.error(e.message),
   });
 
-  const toggleSelect = (id: string) => {
-    const newSelected = new Set(selected);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelected(newSelected);
-  };
+  const nuclearDelete = useMutation({
+    mutationFn: async () => {
+      if (selectedBatchId) {
+        // Delete specific batch
+        const q = query(collection(db, "leads"), where("uploadBatchId", "==", selectedBatchId));
+        const snap = await getDocs(q);
+        
+        let batch = writeBatch(db);
+        let count = 0;
+        for (const d of snap.docs) {
+          batch.delete(d.ref);
+          count++;
+          if (count === 500) { await batch.commit(); batch = writeBatch(db); count = 0; }
+        }
+        if (count > 0) await batch.commit();
 
-  const toggleBatchExpand = (batchId: string) => {
-    const newExpanded = new Set(expanded);
-    if (newExpanded.has(batchId)) {
-      newExpanded.delete(batchId);
-    } else {
-      newExpanded.add(batchId);
-    }
-    setExpanded(newExpanded);
-  };
-
-  // Group leads by batch
-  const leadsByBatch = filtered.reduce(
-    (acc, lead) => {
-      const batchId = lead.uploadBatchId || "unassigned";
-      if (!acc[batchId]) {
-        acc[batchId] = [];
+        // Mark batch as archived
+        await updateDoc(doc(db, "leadImportBatches", selectedBatchId), { batchStatus: "archived" });
+      } else {
+        // Delete All
+        await leadService.deleteAllLeads();
       }
-      acc[batchId].push(lead);
-      return acc;
     },
-    {} as Record<string, Lead[]>
-  );
+    onSuccess: () => {
+      toast.success("Wiped successfully");
+      qc.invalidateQueries();
+      setIsNuclearOpen(false);
+      setViewMode('batches');
+      setSelectedBatchId(null);
+    }
+  });
 
-  const batchList = Object.entries(leadsByBatch)
-    .sort(([aId], [bId]) => {
-      const batchA = batches.find((bat) => bat.id === aId);
-      const batchB = batches.find((bat) => bat.id === bId);
-      const timeA = batchA?.uploadedAt || new Date(0);
-      const timeB = batchB?.uploadedAt || new Date(0);
-      return new Date(timeB).getTime() - new Date(timeA).getTime();
-    });
+  const currentBatch = batches.find(b => b.id === selectedBatchId);
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight">Leads</h2>
-          <p className="text-sm text-muted-foreground">
-            Manage your pipeline. {filtered.length} of {leads.length} shown.
-          </p>
-        </div>
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            setOpen(o);
-            if (!o) setEditing(null);
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button className="bg-gradient-accent text-white shadow-soft hover:opacity-95">
-              <Plus className="h-4 w-4 mr-2" /> Add Lead
+    <div className="flex flex-col h-[calc(100vh-80px)] max-w-full overflow-hidden bg-slate-50">
+      {/* HEADER */}
+      <div className="bg-white border-b sticky top-0 z-20 px-4 py-3 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3">
+          {viewMode === 'leads' && (
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => { setViewMode('batches'); setSelectedBatchId(null); }}>
+              <ArrowLeft className="h-4 w-4" />
             </Button>
-          </DialogTrigger>
-          <LeadDialog
-            initial={editing}
-            telecallers={telecallers}
-            isAdmin={role === "admin"}
-            onSubmit={(f) => upsert.mutate(f)}
-            saving={upsert.isPending}
-          />
-        </Dialog>
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by name, phone or city"
-            className="pl-9"
-          />
-        </div>
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="sm:w-56">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {LEAD_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={escalationFilter} onValueChange={setEscalationFilter}>
-          <SelectTrigger className="sm:w-56">
-            <SelectValue placeholder="Escalation" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All leads</SelectItem>
-            <SelectItem value="pending_senior">🔼 Pending Senior</SelectItem>
-            <SelectItem value="closed_by_senior">✓ Closed by Senior</SelectItem>
-            <SelectItem value="none">No escalation</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      {selected.size > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-semibold text-blue-900">{selected.size} lead(s) selected</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => {
-                if (confirm(`Delete ${selected.size} lead(s)? This cannot be undone.`)) {
-                  bulkDel.mutate(Array.from(selected));
-                }
-              }}
-              disabled={bulkDel.isPending}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Selected
-            </Button>
+          )}
+          <div>
+            <h2 className="text-base font-extrabold tracking-tight text-slate-900 leading-none">
+              {viewMode === 'batches' ? 'Import Batches' : (currentBatch ? `Batch_${currentBatch.uploadedAt.toLocaleDateString().replace(/\//g, '-')}` : 'Master List')}
+            </h2>
+            <p className="text-[10px] text-slate-500 font-medium mt-1 uppercase tracking-widest">
+              {viewMode === 'batches' ? `${batches.length} Files Uploaded` : `Leads: ${totalLeadsCount}`}
+            </p>
           </div>
         </div>
-      )}
-
-      {isLoading && (
-        <div className="text-center py-8 text-muted-foreground">Loading…</div>
-      )}
-
-      {!isLoading && filtered.length === 0 && (
-        <div className="text-center py-10 text-muted-foreground">No leads found. Click "Add Lead" to create one.</div>
-      )}
-
-      {!isLoading && filtered.length > 0 && (
-        <div className="space-y-4">
-        {batchList.map(([batchId, batchLeads]) => {
-          const batch = batches.find((b) => b.id === batchId);
-          const isExpanded = expanded.has(batchId);
-          const assignedCount = batchLeads.filter((l) => l.assignedTo).length;
-          const completedCount = batchLeads.filter((l) => l.leadStatus === "Completed").length;
-          const batchSelectedCount = batchLeads.filter((l) => selected.has(l.id)).length;
-
-          return (
-            <div key={batchId} className="rounded-lg border bg-card shadow-card overflow-hidden">
-              {/* Batch Header */}
-              <div
-                className="bg-gradient-to-r from-slate-50 to-slate-100 px-4 py-3 border-b cursor-pointer hover:from-slate-100 hover:to-slate-200 flex items-center justify-between"
-                onClick={() => toggleBatchExpand(batchId)}
-              >
-                <div className="flex items-center gap-3 flex-1">
-                  {isExpanded ? (
-                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                  )}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-slate-900">
-                        {batch?.dayIdentifier || "Manual Leads"}
-                      </span>
-                      <span className="text-xs text-muted-foreground bg-slate-200 px-2 py-1 rounded">
-                        {batchLeads.length} leads
-                      </span>
-                      {batch?.batchStatus === "active" && (
-                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          Active
-                        </span>
-                      )}
-                      {batch?.batchStatus === "completed" && (
-                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          Completed
-                        </span>
-                      )}
-                      {batch?.batchStatus === "archived" && (
-                        <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                          Archived
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {assignedCount} assigned • {completedCount} completed
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Batch Leads Table */}
-              {isExpanded && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40 text-muted-foreground">
-                      <tr className="text-left">
-                        {role === "admin" && (
-                          <th className="px-4 py-3 font-medium w-10">
-                            <Checkbox
-                              checked={batchSelectedCount > 0 && batchSelectedCount === batchLeads.length}
-                              onCheckedChange={() => {
-                                const newSelected = new Set(selected);
-                                if (batchSelectedCount > 0 && batchSelectedCount === batchLeads.length) {
-                                  batchLeads.forEach((l) => newSelected.delete(l.id));
-                                } else {
-                                  batchLeads.forEach((l) => newSelected.add(l.id));
-                                }
-                                setSelected(newSelected);
-                              }}
-                              aria-label="Select all in batch"
-                            />
-                          </th>
-                        )}
-                        <th className="px-4 py-3 font-medium">Customer</th>
-                        <th className="px-4 py-3 font-medium hidden md:table-cell">City</th>
-                        <th className="px-4 py-3 font-medium">Status</th>
-                        <th className="px-4 py-3 font-medium text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {batchLeads.map((l) => (
-                        <tr key={l.id} className={`hover:bg-muted/30 ${selected.has(l.id) ? "bg-blue-50" : ""}`}>
-                          {role === "admin" && (
-                            <td className="px-4 py-3">
-                              <Checkbox
-                                checked={selected.has(l.id)}
-                                onCheckedChange={() => toggleSelect(l.id)}
-                                aria-label="Select lead"
-                              />
-                            </td>
-                          )}
-                          <td className="px-4 py-3">
-                            <div className="font-medium">{l.customerName}</div>
-                            <div className="text-xs text-muted-foreground">{l.mobileNumber}</div>
-                          </td>
-                          <td className="px-4 py-3 hidden md:table-cell">{l.city || "—"}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-col gap-2">
-                              {(() => {
-                                if (l.assignedTo) {
-                                  const telecaller = telecallers.find((t) => t.id === l.assignedTo);
-                                  if (telecaller) {
-                                    const truncatedName = telecaller.name.substring(0, 4).toUpperCase();
-                                    return (
-                                      <span
-                                        className="text-xs px-2 py-1 rounded-full border font-semibold bg-blue-50 border-blue-200 text-blue-700 cursor-help"
-                                        title={telecaller.name}
-                                      >
-                                        {truncatedName}
-                                      </span>
-                                    );
-                                  }
-                                }
-                                return (
-                                  <span
-                                    className={`text-xs px-2 py-1 rounded-full border ${statusBadgeClass(l.leadStatus)}`}
-                                  >
-                                    {l.leadStatus}
-                                  </span>
-                                );
-                              })()}
-                              
-                              {/* Escalation Badge */}
-                              {l.escalationStatus === "pending_senior" && (
-                                <span className="text-xs px-2 py-1 rounded-full border border-amber-300 bg-amber-50 text-amber-700 font-semibold">
-                                  🔼 Escalated to Senior
-                                </span>
-                              )}
-                              {l.escalationStatus === "closed_by_senior" && (
-                                <span className="text-xs px-2 py-1 rounded-full border border-green-300 bg-green-50 text-green-700 font-semibold">
-                                  ✓ Closed by Senior
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1 justify-end">
-                              <a href={`tel:${l.mobileNumber}`}>
-                                <Button size="icon" variant="ghost" title="Call">
-                                  <Phone className="h-4 w-4" />
-                                </Button>
-                              </a>
-                              <a
-                                href={`https://wa.me/${l.mobileNumber.replace(/\D/g, "")}`}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <Button size="icon" variant="ghost" title="WhatsApp">
-                                  <MessageCircle className="h-4 w-4 text-success" />
-                                </Button>
-                              </a>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => {
-                                  setEditing(l);
-                                  setOpen(true);
-                                }}
-                                title="Edit"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              {role === "admin" && (
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    if (confirm("Delete this lead?")) del.mutate(l.id);
-                                  }}
-                                  title="Delete"
-                                >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+        <div className="flex items-center gap-1.5">
+          {viewMode === 'batches' && (
+            <Button variant="outline" size="sm" className="h-8 text-[10px]" asChild>
+              <Link to="/import-leads"><Plus className="h-3 w-3 mr-1" /> Import CSV</Link>
+            </Button>
+          )}
+          {viewMode === 'leads' && (
+            <>
+              {isAdmin && (
+                <Button variant="outline" size="sm" className="h-8 px-3 text-[10px] border-red-100 text-red-500 hover:bg-red-50" onClick={() => setIsNuclearOpen(true)}>
+                  <Trash2 className="h-3 w-3 mr-1" /> Wipe Batch
+                </Button>
               )}
-            </div>
-          );
-        })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LeadDialog({
-  initial,
-  telecallers,
-  isAdmin,
-  onSubmit,
-  saving,
-}: {
-  initial: Lead | null;
-  telecallers: { id: string; name: string }[];
-  isAdmin: boolean;
-  onSubmit: (form: any) => void;
-  saving: boolean;
-}) {
-  const [customerName, setName] = useState(initial?.customerName ?? "");
-  const [mobileNumber, setMobile] = useState(initial?.mobileNumber ?? "");
-  const [city, setCity] = useState(initial?.city ?? "");
-  const [leadStatus, setStatus] = useState(initial?.leadStatus ?? "New Lead");
-  const [feedbackNotes, setNotes] = useState(initial?.feedbackNotes ?? "");
-  const [followUpDate, setFollow] = useState(initial?.followUpDate?.slice(0, 10) ?? "");
-  const [assignedTo, setAssigned] = useState(initial?.assignedTo || "unassigned");
-
-  return (
-    <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
-      <DialogHeader>
-        <DialogTitle>{initial ? "Edit lead" : "New lead"}</DialogTitle>
-      </DialogHeader>
-      <div className="grid gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Customer name">
-            <Input value={customerName} onChange={(e) => setName(e.target.value)} required />
-          </Field>
-          <Field label="Mobile number">
-            <Input value={mobileNumber} onChange={(e) => setMobile(e.target.value)} required />
-          </Field>
-        </div>
-        <div className="grid grid-cols-1 gap-3">
-          <Field label="City">
-            <Input value={city} onChange={(e) => setCity(e.target.value)} />
-          </Field>
-        </div>
-        <div className="grid grid-cols-1 gap-3">
-          <Field label="Status">
-            <Select value={leadStatus} onValueChange={setStatus}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LEAD_STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Follow-up date">
-            <Input type="date" value={followUpDate} onChange={(e) => setFollow(e.target.value)} />
-          </Field>
-          {isAdmin && (
-            <Field label="Assign to">
-              <Select
-                value={assignedTo}
-                onValueChange={(v) => setAssigned(v)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Unassigned" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {telecallers.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+              <Button size="sm" className="h-8 px-3 text-[10px] bg-gradient-accent text-white" onClick={() => setIsDialogOpen(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Quick Lead
+              </Button>
+            </>
           )}
         </div>
-        <Field label="Feedback notes">
-          <Textarea rows={3} value={feedbackNotes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
       </div>
-      <DialogFooter>
-        <Button
-          disabled={saving}
-          onClick={() =>
-            onSubmit({
-              customerName,
-              mobileNumber,
-              city,
-              leadStatus,
-              feedbackNotes,
-              followUpDate: followUpDate || null,
-              assignedTo: assignedTo === "unassigned" ? null : assignedTo,
-            })
-          }
-          className="bg-gradient-accent text-white"
-        >
-          {saving ? "Saving…" : initial ? "Update lead" : "Create lead"}
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  );
-}
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
-      {children}
+      {/* SEARCH & FILTERS (Only in Leads mode) */}
+      {viewMode === 'leads' && (
+        <div className="p-3 bg-white border-b space-y-2 animate-in slide-in-from-top duration-200">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <Input className="h-8 pl-9 text-xs bg-slate-50 border-none rounded-lg" placeholder="Search in this batch..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-7 text-[10px] flex-1 min-w-[100px] bg-white"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-[10px]">All Status</SelectItem>
+                {LEAD_STATUSES.map(s => <SelectItem key={s} value={s} className="text-[10px]">{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={telecallerFilter} onValueChange={setTelecallerFilter}>
+              <SelectTrigger className="h-7 text-[10px] flex-1 min-w-[100px] bg-white"><SelectValue placeholder="Telecaller" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-[10px]">Everyone</SelectItem>
+                {telecallers.map(tc => <SelectItem key={tc.id} value={tc.id} className="text-[10px]">{tc.fullName}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button variant="ghost" size="sm" className="h-7 text-[9px] font-bold uppercase text-slate-400 hover:text-red-500" onClick={() => { setStatusFilter("all"); setTelecallerFilter("all"); setSearchQuery(""); }}>
+              Reset Filters
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* CONTENT AREA */}
+      <div className="flex-1 overflow-auto bg-slate-50">
+        {viewMode === 'batches' ? (
+          /* BATCH LIST VIEW */
+          <div className="max-w-4xl mx-auto p-6 space-y-3">
+             {/* Master List Row */}
+             <div 
+               className="bg-white border rounded-lg p-4 flex items-center justify-between hover:border-blue-300 hover:bg-blue-50/30 cursor-pointer transition-all group"
+               onClick={() => { setViewMode('leads'); setSelectedBatchId(null); }}
+             >
+               <div className="flex items-center gap-4">
+                 <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
+                   <Layers className="h-5 w-5" />
+                 </div>
+                 <div>
+                   <h3 className="text-sm font-bold text-slate-900">Master List (All Contacts)</h3>
+                   <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Complete database overview</p>
+                 </div>
+               </div>
+               <ChevronRight className="h-5 w-5 text-slate-200 group-hover:text-blue-500 transition-all" />
+             </div>
+
+             <div className="pt-4 pb-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+               <History className="h-3 w-3" /> Import History
+             </div>
+
+             {batchesLoading ? (
+               Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-16 bg-white border rounded-lg animate-pulse" />)
+             ) : batches.length === 0 ? (
+               <div className="py-20 text-center">
+                 <Inbox className="h-12 w-12 text-slate-200 mx-auto mb-3" />
+                 <p className="text-sm text-slate-400 font-medium">No import batches found.</p>
+               </div>
+             ) : (
+               batches.map((batch) => {
+                 const batchName = `Batch_${batch.uploadedAt.toLocaleDateString().replace(/\//g, '-')}`;
+                 return (
+                   <div 
+                     key={batch.id} 
+                     className="bg-white border rounded-lg p-4 flex items-center justify-between hover:border-blue-200 hover:shadow-sm cursor-pointer transition-all group relative"
+                     onClick={() => { setSelectedBatchId(batch.id); setViewMode('leads'); }}
+                   >
+                     <div className="flex items-center gap-4">
+                       <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                         <FileText className="h-5 w-5" />
+                       </div>
+                       <div>
+                         <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{batchName}</h3>
+                         <div className="flex items-center gap-3 mt-0.5">
+                           <p className="text-[10px] text-slate-500 font-medium">{batch.fileName}</p>
+                           <span className="text-[10px] text-slate-300">•</span>
+                           <p className="text-[10px] text-blue-600 font-bold">{batch.importedRows} Contacts</p>
+                         </div>
+                       </div>
+                     </div>
+                     
+                     <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                       {isAdmin && (
+                         <Button 
+                           variant="ghost" 
+                           size="sm" 
+                           className="h-9 w-9 p-0 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                           onClick={() => { setSelectedBatchId(batch.id); setIsNuclearOpen(true); }}
+                           title="Delete Batch"
+                         >
+                           <Trash2 className="h-4 w-4" />
+                         </Button>
+                       )}
+                       <div className="h-9 w-9 flex items-center justify-center text-slate-200 group-hover:text-blue-500 transition-all">
+                         <ChevronRight className="h-5 w-5" />
+                       </div>
+                     </div>
+                   </div>
+                 );
+               })
+             )}
+          </div>
+        ) : (
+          /* LEADS EXPLORER (VIRTUALIZED) */
+          <div ref={parentRef} className="h-full bg-white relative overflow-auto border-t">
+             {leadsLoading ? (
+               <div className="flex flex-col items-center justify-center h-full space-y-3 opacity-50"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Opening Folder...</p></div>
+             ) : allLeads.length === 0 ? (
+               <div className="flex flex-col items-center justify-center h-full p-8 text-center space-y-4">
+                 <div className="bg-slate-50 p-4 rounded-full"><Inbox className="h-8 w-8 text-slate-300" /></div>
+                 <div><h3 className="font-bold text-slate-400">Empty Batch</h3><p className="text-[10px] text-slate-400 uppercase">Try clearing filters or check the import source</p></div>
+               </div>
+             ) : (
+               <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                 {rowVirtualizer.getVirtualItems().map((vRow) => {
+                   const lead = allLeads[vRow.index];
+                   if (!lead) return <div key={vRow.key} className="absolute top-0 left-0 w-full flex items-center justify-center p-4" style={{ height: `${vRow.size}px`, transform: `translateY(${vRow.start}px)` }}><Loader2 className="h-4 w-4 animate-spin text-slate-200" /></div>;
+                   const assignedName = telecallers.find(t => t.id === lead.assignedTo)?.fullName || 'Assigned';
+
+                   return (
+                     <div key={vRow.key} className={`absolute top-0 left-0 w-full border-b flex items-center px-4 transition-colors ${selectedLeads.has(lead.id) ? 'bg-blue-50/50' : 'bg-white hover:bg-slate-50'}`} style={{ height: `${vRow.size}px`, transform: `translateY(${vRow.start}px)` }}>
+                       <div className="flex items-center gap-3 w-full">
+                         <Checkbox checked={selectedLeads.has(lead.id)} onCheckedChange={() => { const n = new Set(selectedLeads); if(n.has(lead.id)) n.delete(lead.id); else n.add(lead.id); setSelectedLeads(n); }} className="h-4 w-4" />
+                         <div className="flex-1 min-w-0 py-2">
+                           <div className="flex items-center justify-between">
+                             <p className="text-xs font-bold text-slate-900 truncate">{lead.customerName}</p>
+                             <span className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded border leading-none ${statusBadgeClass(lead.leadStatus)}`}>{lead.leadStatus}</span>
+                           </div>
+                           <div className="flex items-center justify-between mt-1">
+                             <p className="text-[10px] text-slate-500 font-medium truncate">{lead.mobileNumber} • {lead.city || '—'}</p>
+                             <div className="flex items-center gap-2">
+                               <p className={`text-[9px] font-bold ${lead.assignedTo ? 'text-blue-600' : 'text-slate-400 italic'}`}>{lead.assignedTo ? `Assigned: ${assignedName}` : 'Not Assigned'}</p>
+                               <div className="flex items-center gap-1.5 ml-2">
+                                 <a href={`tel:${lead.mobileNumber}`} className="h-7 w-7 flex items-center justify-center rounded-full bg-blue-50 text-blue-600 border border-blue-100"><Phone className="h-3 w-3" /></a>
+                                 <a href={`https://wa.me/${lead.mobileNumber.replace(/\D/g, "")}`} target="_blank" className="h-7 w-7 flex items-center justify-center rounded-full bg-green-50 text-green-600 border border-green-100"><MessageCircle className="h-3.5 w-3.5" /></a>
+                                 {role === "admin" && <button className="h-7 w-7 flex items-center justify-center rounded-full bg-red-50 text-red-300 border border-red-100" onClick={() => confirm("Delete lead?") && bulkDel.mutate([lead.id])}><Trash2 className="h-3 w-3" /></button>}
+                               </div>
+                             </div>
+                           </div>
+                         </div>
+                       </div>
+                     </div>
+                   );
+                 })}
+               </div>
+             )}
+          </div>
+        )}
+      </div>
+
+      {/* FOOTER STATS */}
+      <div className="px-4 py-2 bg-white border-t flex justify-between items-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+         <span>{isFetchingNextPage ? 'Syncing...' : 'Ready'} • {viewMode === 'batches' ? `${batches.length} Batches` : `${allLeads.length} Leads`}</span>
+         {isFetchingNextPage && <Loader2 className="h-3 w-3 animate-spin" />}
+      </div>
+
+      {/* QUICK LEAD DIALOG */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-md rounded-2xl p-4 gap-4">
+          <DialogHeader><DialogTitle className="text-sm font-bold uppercase tracking-widest">Quick Entry</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+             <div className="grid grid-cols-2 gap-2">
+               <div className="space-y-1"><Label className="text-[9px] uppercase font-bold text-slate-500">Name</Label><Input id="new-name" placeholder="Full Name" className="h-8 text-xs" /></div>
+               <div className="space-y-1"><Label className="text-[9px] uppercase font-bold text-slate-500">Mobile</Label><Input id="new-mobile" placeholder="Phone Number" className="h-8 text-xs" /></div>
+             </div>
+             <div className="space-y-1"><Label className="text-[9px] uppercase font-bold text-slate-500">Notes</Label><Textarea id="new-notes" className="text-xs min-h-[60px]" placeholder="Add comments..." /></div>
+          </div>
+          <DialogFooter><Button className="w-full bg-blue-600 h-9 text-xs font-bold uppercase tracking-wider text-white" onClick={() => {
+            const name = (document.getElementById('new-name') as HTMLInputElement)?.value;
+            const mobile = (document.getElementById('new-mobile') as HTMLInputElement)?.value;
+            if(!name || !mobile) { toast.error("Name and Mobile required"); return; }
+            createMutation.mutate({ customerName: name, mobileNumber: mobile, leadStatus: 'New Lead', uploadBatchId: selectedBatchId || undefined });
+          }}>Save to {selectedBatchId ? 'this Batch' : 'Master List'}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* NUCLEAR WIPE DIALOG */}
+      <Dialog open={isNuclearOpen} onOpenChange={setIsNuclearOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-md rounded-2xl p-6 gap-6 text-center">
+          <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center mx-auto"><ShieldAlert className="h-6 w-6 text-red-600" /></div>
+          <DialogHeader><DialogTitle className="text-lg font-bold text-red-600 uppercase">Wipe Batch?</DialogTitle><DialogDescription className="text-xs">This will permanently delete ALL leads in this specific batch. This cannot be undone.</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="p-3 bg-red-50 border border-red-100 rounded-lg"><p className="text-[10px] text-red-700 font-bold uppercase">To confirm, type <b>DELETE BATCH</b></p></div>
+            <Input className="h-10 text-center font-bold tracking-widest uppercase border-red-200" placeholder="..." value={confirmText} onChange={e => setConfirmText(e.target.value)} />
+          </div>
+          <DialogFooter className="flex flex-col gap-2">
+            <Button className="w-full bg-red-600 text-white font-bold h-10" disabled={confirmText !== "DELETE BATCH"} onClick={() => nuclearDelete.mutate()}>Wipe Folder</Button>
+            <Button variant="ghost" className="w-full text-slate-400 font-bold" onClick={() => { setIsNuclearOpen(false); setConfirmText(""); }}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

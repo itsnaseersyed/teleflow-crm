@@ -19,18 +19,18 @@ export interface Lead {
   id: string;
   customerName: string;
   mobileNumber: string;
-  city?: string;
+  city?: string | null;
   leadStatus: "Unassigned" | "Assigned" | "In Progress" | "Completed" | "Follow-Up" | "Converted" | "Not Interested";
-  assignedTo?: string; // uid of telecaller
-  assignedAt?: Date;
-  queuePosition?: number;
-  uploadBatchId?: string; // Reference to import batch
-  uploadSource?: string;
-  lastCallStatus?: "Interested" | "Follow-Up Needed" | "Not Interested" | "Busy" | "No Response" | "Switched Off" | "Converted" | "Invalid Number";
-  lastCalledAt?: Date;
-  completedStatus?: boolean;
-  feedbackNotes?: string;
-  followUpDate?: Date | string;
+  assignedTo?: string | null; // uid of telecaller
+  assignedAt?: Date | null;
+  queuePosition?: number | null;
+  uploadBatchId?: string | null; // Reference to import batch
+  uploadSource?: string | null;
+  lastCallStatus?: "Interested" | "Follow-Up Needed" | "Not Interested" | "Busy" | "No Response" | "Switched Off" | "Converted" | "Invalid Number" | null;
+  lastCalledAt?: Date | null;
+  completedStatus?: boolean | null;
+  feedbackNotes?: string | null;
+  followUpDate?: Date | string | null;
   createdBy: string; // uid of admin who created/added
   createdAt: Date;
   
@@ -90,11 +90,11 @@ export interface Call {
   telecallerId: string;
   customerName: string;
   mobileNumber: string;
-  city?: string;
+  city?: string | null;
   callStatus: string;
-  feedbackNotes?: string;
-  followUpDate?: Date | string;
-  callDuration?: number; // seconds
+  feedbackNotes?: string | null;
+  followUpDate?: Date | string | null;
+  callDuration?: number | null; // seconds
   createdAt: Date;
 }
 
@@ -114,4 +114,32 @@ export interface Notification {
   message: string;
   readStatus: boolean;
   createdAt: Date;
+}
+
+export interface DashboardStats {
+  totalLeads: number;
+  assignedLeads: number;
+  unassignedLeads: number;
+  convertedLeads: number;
+  notInterestedLeads: number;
+  followUpLeads: number;
+  inProgressLeads: number;
+  completedLeads: number;
+  totalCalls: number;
+  telecallerCount: number;
+  lastUpdated: any;
+}
+
+export interface UserStats {
+  userId: string;
+  totalLeads: number;
+  assignedLeads: number;
+  convertedLeads: number;
+  notInterestedLeads: number;
+  followUpLeads: number;
+  inProgressLeads: number;
+  completedLeads: number;
+  callsToday: number;
+  totalCalls: number;
+  lastUpdated: any;
 }

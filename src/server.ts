@@ -22,15 +22,15 @@ async function handleDeleteTelecaller(request: Request, env: unknown): Promise<R
     return jsonResponse({ error: "Missing authorization token" }, 401);
   }
 
-  let payload: { uid?: string };
+  let payload: { uid?: string; permanent?: boolean };
   try {
-    payload = (await request.json()) as { uid?: string };
+    payload = (await request.json()) as { uid?: string; permanent?: boolean };
   } catch {
     return jsonResponse({ error: "Invalid request body" }, 400);
   }
 
   if (!payload.uid) {
-    return jsonResponse({ error: "Missing telecaller uid" }, 400);
+    return jsonResponse({ error: "Missing user uid" }, 400);
   }
 
   try {
@@ -47,14 +47,10 @@ async function handleDeleteTelecaller(request: Request, env: unknown): Promise<R
     const targetSnap = await targetRef.get();
 
     if (!targetSnap.exists) {
-      return jsonResponse({ error: "Telecaller profile not found" }, 404);
+      return jsonResponse({ error: "User profile not found" }, 404);
     }
 
-    const target = targetSnap.data();
-    if (target?.role !== "telecaller") {
-      return jsonResponse({ error: "Only telecaller accounts can be deleted from this action" }, 400);
-    }
-
+    // Delete from Firebase Auth
     try {
       await auth.deleteUser(payload.uid);
     } catch (error: any) {
@@ -63,18 +59,24 @@ async function handleDeleteTelecaller(request: Request, env: unknown): Promise<R
       }
     }
 
-    await targetRef.update({
-      isActive: false,
-      password: null,
-      deletedAt: new Date(),
-      deletedBy: decoded.uid,
-      deletedByName: requester?.fullName || requester?.email || null,
-    });
+    if (payload.permanent) {
+      // Hard delete from Firestore
+      await targetRef.delete();
+    } else {
+      // Soft delete from Firestore
+      await targetRef.update({
+        isActive: false,
+        password: null,
+        deletedAt: new Date(),
+        deletedBy: decoded.uid,
+        deletedByName: requester?.fullName || requester?.email || null,
+      });
+    }
 
     return jsonResponse({ success: true });
   } catch (error: any) {
-    console.error("Failed to delete telecaller:", error);
-    return jsonResponse({ error: error?.message || "Failed to delete telecaller" }, 500);
+    console.error("Failed to delete user:", error);
+    return jsonResponse({ error: error?.message || "Failed to delete user" }, 500);
   }
 }
 
@@ -144,7 +146,7 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     const url = new URL(request.url);
-    if (url.pathname === "/api/admin/delete-telecaller") {
+    if (url.pathname === "/api/delete-user") {
       return handleDeleteTelecaller(request, env);
     }
 

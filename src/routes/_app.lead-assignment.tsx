@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Label } from "@/components/ui/label";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   collection,
   query,
@@ -10,6 +11,10 @@ import {
   doc,
   orderBy,
   writeBatch,
+  limit,
+  startAfter,
+  serverTimestamp,
+  getCountFromServer,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -32,14 +37,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
@@ -47,10 +44,11 @@ import {
   Send,
   RotateCw,
   CheckCircle2,
-  AlertCircle,
   Loader2,
+  LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 export const Route = createFileRoute("/_app/lead-assignment")({
   component: LeadAssignmentPage,
@@ -63,8 +61,8 @@ interface Lead {
   city?: string;
   leadStatus: string;
   assignedTo?: string;
-  assignedAt?: Date;
-  createdAt: Date;
+  assignedAt?: any;
+  createdAt: any;
 }
 
 interface User {
@@ -73,843 +71,301 @@ interface User {
   email: string;
 }
 
+const PAGE_SIZE = 50;
+
 function LeadAssignmentPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const parentRef = useRef<HTMLDivElement>(null);
+  
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTeamLeader, setSelectedTeamLeader] = useState<string>("all");
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
+  const [isSelectAllMode, setIsSelectAllMode] = useState(false);
+  
   const [bulkAssignDialog, setBulkAssignDialog] = useState(false);
   const [bulkAssignTo, setBulkAssignTo] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("Unassigned");
-  const [quickSelectCount, setQuickSelectCount] = useState<string>("10");
   const [customCount, setCustomCount] = useState("");
+  
   const [showSmartDistribution, setShowSmartDistribution] = useState(false);
   const [selectedTelecallersForDistribution, setSelectedTelecallersForDistribution] = useState<Set<string>>(new Set());
   const [totalLeadsForDistribution, setTotalLeadsForDistribution] = useState<string>("");
+  const [isDistributing, setIsDistributing] = useState(false);
+  const [distributionProgress, setDistributionProgress] = useState(0);
 
-  // Fetch leads
-  const { data: leads = [], isLoading: leadsLoading } = useQuery({
-    queryKey: ["leads-assignment", statusFilter],
-    enabled: !!user,
+  // 1. Fetch leads count
+  const { data: totalLeadsCount = 0 } = useQuery({
+    queryKey: ["leads-count", statusFilter],
     queryFn: async () => {
-      const q = query(
-        collection(db, "leads"),
-        where("leadStatus", "==", statusFilter),
-      );
-      const snap = await getDocs(q);
-      const leadsList = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-        createdAt: d.data().createdAt?.toDate?.() || new Date(),
-        assignedAt: d.data().assignedAt?.toDate?.() || undefined,
-      })) as Lead[];
-      
-      // Sort by createdAt in descending order (newest first)
-      return leadsList.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    },
+      const q = query(collection(db, "leads"), where("leadStatus", "==", statusFilter));
+      const snapshot = await getCountFromServer(q);
+      return snapshot.data().count;
+    }
   });
 
-  // Fetch telecallers
+  // 2. Infinite Query
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: leadsLoading,
+  } = useInfiniteQuery({
+    queryKey: ["leads-assignment-infinite", statusFilter],
+    enabled: !!user,
+    initialPageParam: undefined as any,
+    queryFn: async ({ pageParam }) => {
+      try {
+        let q = query(
+          collection(db, "leads"),
+          where("leadStatus", "==", statusFilter),
+          orderBy("createdAt", "desc"),
+          limit(PAGE_SIZE)
+        );
+        if (pageParam) q = query(q, startAfter(pageParam));
+        const snap = await getDocs(q);
+        const leads = snap.docs.map(d => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.() || new Date(),
+        })) as Lead[];
+        return { leads, lastDoc: snap.docs[snap.docs.length - 1] || null };
+      } catch (e: any) {
+        toast.error("Firestore Index Required. Check console.");
+        throw e;
+      }
+    },
+    getNextPageParam: (lastPage) => lastPage.lastDoc || undefined,
+  });
+
+  const allLeads = useMemo(() => {
+    const fetched = data?.pages.flatMap((page) => page.leads) ?? [];
+    if (!searchQuery) return fetched;
+    const s = searchQuery.toLowerCase();
+    return fetched.filter(l => l.customerName?.toLowerCase().includes(s) || l.mobileNumber?.includes(s));
+  }, [data, searchQuery]);
+
+  // 3. Virtualizer
+  const rowVirtualizer = useVirtualizer({
+    count: hasNextPage ? allLeads.length + 1 : allLeads.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 72,
+    overscan: 10,
+  });
+
+  useEffect(() => {
+    const [lastItem] = [...rowVirtualizer.getVirtualItems()].reverse();
+    if (lastItem && lastItem.index >= allLeads.length - 1 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, allLeads.length, rowVirtualizer.getVirtualItems(), fetchNextPage]);
+
+  // 4. Telecallers
   const { data: telecallers = [] } = useQuery({
     queryKey: ["telecallers"],
     enabled: !!user,
     queryFn: async () => {
       const q = query(collection(db, "users"), where("role", "==", "telecaller"));
       const snap = await getDocs(q);
-      return snap.docs.map(
-        (d) =>
-          ({
-            id: d.id,
-            ...d.data(),
-          }) as User,
-      );
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }) as User);
     },
   });
 
-  // Filter leads based on search and telecaller
-  const filteredLeads = useMemo(() => {
-    return leads.filter((lead) => {
-      const matchesSearch =
-        !searchQuery ||
-        lead.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        lead.mobileNumber.includes(searchQuery) ||
-        (lead.city || "").toLowerCase().includes(searchQuery.toLowerCase());
-
-      const matchesTeamLeader =
-        selectedTeamLeader === "all" || lead.assignedTo === selectedTeamLeader;
-
-      return matchesSearch && matchesTeamLeader;
-    });
-  }, [leads, searchQuery, selectedTeamLeader]);
-
-  // Calculate stats
-  const stats = useMemo(() => {
-    return {
-      total: leads.length,
-      unassigned: leads.filter((l) => !l.assignedTo).length,
-      assigned: leads.filter((l) => l.assignedTo).length,
-      byTeamLeader: telecallers.map((tl) => ({
-        id: tl.id,
-        name: tl.fullName,
-        count: leads.filter((l) => l.assignedTo === tl.id).length,
-      })),
-    };
-  }, [leads, telecallers]);
-
-  // Assign lead mutation
   const assignMutation = useMutation({
-    mutationFn: async ({
-      leadId,
-      telecallerId,
-    }: {
-      leadId: string;
-      telecallerId: string;
-    }) => {
+    mutationFn: async ({ leadId, telecallerId }: { leadId: string; telecallerId: string }) => {
       await updateDoc(doc(db, "leads", leadId), {
         assignedTo: telecallerId,
-        assignedAt: new Date(),
+        assignedAt: serverTimestamp(),
         leadStatus: "Assigned",
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads-assignment"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      toast.success("Lead assigned successfully");
-    },
-    onError: (err: any) => {
-      toast.error(err.message);
-    },
-  });
-
-  // Bulk assign mutation
-  const bulkAssignMutation = useMutation({
-    mutationFn: async ({
-      leadIds,
-      telecallerId,
-    }: {
-      leadIds: string[];
-      telecallerId: string;
-    }) => {
-      const batch = writeBatch(db);
-      leadIds.forEach((leadId) => {
-        batch.update(doc(db, "leads", leadId), {
-          assignedTo: telecallerId,
-          assignedAt: new Date(),
-          leadStatus: "Assigned",
-        });
-      });
-      await batch.commit();
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads-assignment"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      setBulkAssignDialog(false);
-      setSelectedLeads(new Set());
-      setBulkAssignTo("");
-      toast.success(`${selectedLeads.size} leads assigned successfully`);
-    },
-    onError: (err: any) => {
-      toast.error(err.message);
+      qc.invalidateQueries({ queryKey: ["leads-assignment-infinite"] });
+      qc.invalidateQueries({ queryKey: ["leads-count"] });
+      toast.success("Assigned");
     },
   });
 
   const handleSelectLead = (leadId: string) => {
     const newSelected = new Set(selectedLeads);
-    if (newSelected.has(leadId)) {
-      newSelected.delete(leadId);
-    } else {
-      newSelected.add(leadId);
-    }
+    if (newSelected.has(leadId)) newSelected.delete(leadId); else newSelected.add(leadId);
     setSelectedLeads(newSelected);
   };
 
-  const handleSelectAll = () => {
-    if (selectedLeads.size === filteredLeads.length) {
-      setSelectedLeads(new Set());
-    } else {
-      setSelectedLeads(new Set(filteredLeads.map((l) => l.id)));
-    }
-  };
-
-  const handleQuickSelect = () => {
-    let count = 0;
-    if (quickSelectCount === "custom") {
-      count = parseInt(customCount) || 0;
-    } else {
-      count = parseInt(quickSelectCount);
-    }
-
-    if (count <= 0) {
-      toast.error("Invalid count. Enter a number greater than 0.");
-      return;
-    }
-
-    if (count > filteredLeads.length) {
-      toast.warning(`Only ${filteredLeads.length} leads available. Selecting all.`);
-      count = filteredLeads.length;
-    }
-
-    const selectedIds = new Set(filteredLeads.slice(0, count).map((l) => l.id));
-    setSelectedLeads(selectedIds);
-    toast.success(`Selected ${count} leads`);
-  };
-
-  const toggleTelecallerForDistribution = (telecallerId: string) => {
-    const newSelected = new Set(selectedTelecallersForDistribution);
-    if (newSelected.has(telecallerId)) {
-      newSelected.delete(telecallerId);
-    } else {
-      newSelected.add(telecallerId);
-    }
-    setSelectedTelecallersForDistribution(newSelected);
-  };
-
-  const calculateDistribution = () => {
-    const totalCount = parseInt(totalLeadsForDistribution) || 0;
-    const telecallerCount = selectedTelecallersForDistribution.size;
-
-    if (totalCount <= 0) {
-      toast.error("Enter a valid number of leads");
-      return null;
-    }
-
-    if (telecallerCount === 0) {
-      toast.error("Select at least one telecaller");
-      return null;
-    }
-
-    if (totalCount > filteredLeads.length) {
-      toast.warning(`Only ${filteredLeads.length} leads available. Distributing all.`);
-      return calculateDistribution_Internal(filteredLeads.length, Array.from(selectedTelecallersForDistribution));
-    }
-
-    return calculateDistribution_Internal(totalCount, Array.from(selectedTelecallersForDistribution));
-  };
-
-  const calculateDistribution_Internal = (totalCount: number, telecallerIds: string[]) => {
-    const leadsPerTelecaller = Math.floor(totalCount / telecallerIds.length);
-    const remainder = totalCount % telecallerIds.length;
-
-    const distribution: { [key: string]: number } = {};
-    telecallerIds.forEach((id, index) => {
-      distribution[id] = leadsPerTelecaller + (index < remainder ? 1 : 0);
-    });
-
-    return distribution;
-  };
-
   const handleSmartDistribution = async () => {
-    const distribution = calculateDistribution();
-    if (!distribution) return;
-
+    const countToDistribute = parseInt(totalLeadsForDistribution) || 0;
+    const selectedTeleIds = Array.from(selectedTelecallersForDistribution);
+    if (countToDistribute <= 0 || selectedTeleIds.length === 0) { toast.error("Select count and team"); return; }
+    setIsDistributing(true); setDistributionProgress(0);
     try {
-      const telecallerIds = Object.keys(distribution);
-      let leadIndex = 0;
-      const batch = writeBatch(db);
-
-      // Assign first totalLeadsForDistribution leads from filteredLeads
-      for (const telecallerId of telecallerIds) {
-        const count = distribution[telecallerId];
-        for (let i = 0; i < count; i++) {
-          if (leadIndex < filteredLeads.length) {
-            const lead = filteredLeads[leadIndex];
-            batch.update(doc(db, "leads", lead.id), {
-              assignedTo: telecallerId,
-              assignedAt: new Date(),
-              leadStatus: "Assigned",
-            });
-            leadIndex++;
-          }
-        }
+      let processed = 0; let lastDoc = null; let teleIndex = 0;
+      while (processed < countToDistribute) {
+        const currentBatchSize = Math.min(countToDistribute - processed, 500);
+        let q = query(collection(db, "leads"), where("leadStatus", "==", "Unassigned"), orderBy("createdAt", "desc"), limit(currentBatchSize));
+        if (lastDoc) q = query(q, startAfter(lastDoc));
+        const snap = await getDocs(q);
+        if (snap.empty) break;
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => {
+          batch.update(doc(db, "leads", d.id), {
+            assignedTo: selectedTeleIds[teleIndex % selectedTeleIds.length],
+            assignedAt: serverTimestamp(),
+            leadStatus: "Assigned",
+          });
+          teleIndex++;
+        });
+        await batch.commit();
+        processed += snap.docs.length; lastDoc = snap.docs[snap.docs.length - 1];
+        setDistributionProgress(Math.round((processed / countToDistribute) * 100));
       }
-
-      await batch.commit();
-      qc.invalidateQueries({ queryKey: ["leads-assignment"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success(`Distributed ${processed} leads!`);
+      qc.invalidateQueries({ queryKey: ["leads-assignment-infinite"] });
+      qc.invalidateQueries({ queryKey: ["leads-count"] });
       setShowSmartDistribution(false);
-      setSelectedTelecallersForDistribution(new Set());
-      setTotalLeadsForDistribution("");
-      toast.success("Smart distribution completed!");
-    } catch (err: any) {
-      toast.error(err.message);
-    }
-  };
-
-  const handleBulkAssign = () => {
-    if (selectedLeads.size === 0 || !bulkAssignTo) {
-      toast.error("Select leads and a telecaller");
-      return;
-    }
-
-    bulkAssignMutation.mutate({
-      leadIds: Array.from(selectedLeads),
-      telecallerId: bulkAssignTo,
-    });
+    } catch (e: any) { toast.error(e.message); } finally { setIsDistributing(false); }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="flex flex-col h-[calc(100vh-80px)] max-w-full overflow-hidden">
+      {/* Compact Header */}
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b sticky top-0 z-20">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Lead Assignment</h2>
-          <p className="text-muted-foreground mt-1">
-            Distribute leads to telecallers for efficient call handling
-          </p>
+          <h2 className="text-lg font-bold leading-none">Assignment</h2>
+          <p className="text-[10px] text-muted-foreground mt-1">Total: {totalLeadsCount}</p>
         </div>
         {selectedLeads.size > 0 && (
-          <Button
-            onClick={() => setBulkAssignDialog(true)}
-            className="bg-gradient-accent text-white"
-          >
-            <Send className="h-4 w-4 mr-2" />
-            Assign {selectedLeads.size} Lead{selectedLeads.size !== 1 ? "s" : ""}
+          <Button size="sm" onClick={() => setBulkAssignDialog(true)} className="h-8 text-xs bg-gradient-accent">
+            <Send className="h-3 w-3 mr-1.5" /> Assign {selectedLeads.size}
           </Button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground mb-1">Total Leads</p>
-              <p className="text-3xl font-bold">{stats.total}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-amber-200 bg-amber-50">
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-sm text-amber-700 mb-1">Unassigned</p>
-              <p className="text-3xl font-bold text-amber-700">{stats.unassigned}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-sm text-green-700 mb-1">Assigned</p>
-              <p className="text-3xl font-bold text-green-700">{stats.assigned}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="md:col-span-2">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">By Telecaller</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {stats.byTeamLeader.slice(0, 3).map((tc) => (
-              <div key={tc.id} className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{tc.name}</span>
-                <span className="font-semibold">{tc.count}</span>
+      {/* Main Content Area */}
+      <div className="flex-1 overflow-auto bg-slate-50">
+        <div className="p-3 space-y-3 max-w-5xl mx-auto">
+          {/* Action Panels */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter">Quick Select</span>
+                {selectedLeads.size > 0 && <Button variant="link" size="sm" className="h-auto p-0 text-[10px] text-red-500" onClick={() => setSelectedLeads(new Set())}>Clear</Button>}
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
+              <div className="flex flex-wrap gap-1.5">
+                {["10", "20", "50"].map(n => (
+                  <Button key={n} variant="outline" size="sm" className="h-7 text-[10px] px-3" onClick={() => setSelectedLeads(new Set(allLeads.slice(0, parseInt(n)).map(l => l.id)))}>Top {n}</Button>
+                ))}
+                <Input type="number" placeholder="Count..." className="h-7 w-20 text-[10px] ml-auto" value={customCount} onChange={e => setCustomCount(e.target.value)} />
+                <Button size="sm" className="h-7 text-[10px]" onClick={() => setSelectedLeads(new Set(allLeads.slice(0, parseInt(customCount)).map(l => l.id)))}>Go</Button>
+              </div>
+            </div>
 
-      <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3">
-          <TabsTrigger value="Unassigned">Unassigned</TabsTrigger>
-          <TabsTrigger value="Assigned">Assigned</TabsTrigger>
-          <TabsTrigger value="In Progress">In Progress</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value={statusFilter} className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle>Leads</CardTitle>
-                  <CardDescription>
-                    {filteredLeads.length} of {leads.length} leads
-                  </CardDescription>
-                </div>
-                <div className="flex gap-3">
-                  <div className="relative flex-1 sm:flex-none sm:w-64">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by name, phone, city..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-9"
-                    />
-                  </div>
-                  <Select value={selectedTeamLeader} onValueChange={setSelectedTeamLeader}>
-                    <SelectTrigger className="sm:w-56">
-                      <SelectValue placeholder="Filter by telecaller" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All telecallers</SelectItem>
-                      {telecallers.map((tc) => (
-                        <SelectItem key={tc.id} value={tc.id}>
-                          {tc.fullName}
-                        </SelectItem>
+            <div className={`p-3 rounded-xl border shadow-sm transition-all ${showSmartDistribution ? 'bg-indigo-50 border-indigo-100' : 'bg-white border-slate-200'}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-700 uppercase tracking-tighter">Smart Distribution</span>
+                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowSmartDistribution(!showSmartDistribution)}>{showSmartDistribution ? 'Close' : 'Configure'}</Button>
+              </div>
+              {showSmartDistribution && (
+                <div className="mt-3 space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                   <div className="flex flex-wrap gap-1">
+                      {telecallers.map(tc => (
+                        <Button key={tc.id} size="sm" variant={selectedTelecallersForDistribution.has(tc.id) ? "default" : "outline"} className={`h-6 text-[9px] px-2 ${selectedTelecallersForDistribution.has(tc.id) ? 'bg-indigo-600' : ''}`} onClick={() => { const n = new Set(selectedTelecallersForDistribution); if(n.has(tc.id)) n.delete(tc.id); else n.add(tc.id); setSelectedTelecallersForDistribution(n); }}>{tc.fullName}</Button>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardHeader>
-
-            <CardContent>
-              {/* Quick Select Section - Only show for Unassigned leads */}
-              {statusFilter === "Unassigned" && (
-                <div className="space-y-4 mb-4">
-                  {/* Quick Select */}
-                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-blue-900 mb-2">Quick Select Leads:</p>
-                        <div className="flex gap-2 flex-wrap">
-                          <Select value={quickSelectCount} onValueChange={(val) => {
-                            setQuickSelectCount(val);
-                            if (val !== "custom") setCustomCount("");
-                          }}>
-                            <SelectTrigger className="w-32">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="10">10 Leads</SelectItem>
-                              <SelectItem value="20">20 Leads</SelectItem>
-                              <SelectItem value="30">30 Leads</SelectItem>
-                              <SelectItem value="40">40 Leads</SelectItem>
-                              <SelectItem value="50">50 Leads</SelectItem>
-                              <SelectItem value="60">60 Leads</SelectItem>
-                              <SelectItem value="custom">Other</SelectItem>
-                            </SelectContent>
-                          </Select>
-
-                          {quickSelectCount === "custom" && (
-                            <Input
-                              type="number"
-                              min="1"
-                              placeholder="Enter count..."
-                              value={customCount}
-                              onChange={(e) => setCustomCount(e.target.value)}
-                              className="w-32"
-                            />
-                          )}
-
-                          <Button
-                            onClick={handleQuickSelect}
-                            variant="outline"
-                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-100"
-                          >
-                            Select
-                          </Button>
-
-                          {selectedLeads.size > 0 && (
-                            <Button
-                              onClick={() => setSelectedLeads(new Set())}
-                              variant="ghost"
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                            >
-                              Clear Selection
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Smart Distribution */}
-                  <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-sm font-medium text-green-900">Smart Distribution:</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowSmartDistribution(!showSmartDistribution)}
-                        className="text-green-600 hover:text-green-700"
-                      >
-                        {showSmartDistribution ? "Hide" : "Show"}
-                      </Button>
-                    </div>
-
-                    {showSmartDistribution && (
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-xs font-medium text-green-900 block mb-2">
-                            Select Telecallers:
-                          </label>
-                          <div className="flex flex-wrap gap-2">
-                            {telecallers.map((tc) => (
-                              <Button
-                                key={tc.id}
-                                variant={selectedTelecallersForDistribution.has(tc.id) ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => toggleTelecallerForDistribution(tc.id)}
-                                className={selectedTelecallersForDistribution.has(tc.id) ? "bg-green-600 hover:bg-green-700" : ""}
-                              >
-                                {tc.fullName}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="text-xs font-medium text-green-900 block mb-2">
-                            Total Leads to Distribute:
-                          </label>
-                          <Input
-                            type="number"
-                            min="1"
-                            placeholder="e.g., 100"
-                            value={totalLeadsForDistribution}
-                            onChange={(e) => setTotalLeadsForDistribution(e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
-
-                        {selectedTelecallersForDistribution.size > 0 && totalLeadsForDistribution && (
-                          <div className="p-3 bg-white rounded border border-green-200">
-                            <p className="text-xs font-medium text-green-900 mb-2">Distribution Preview:</p>
-                            <div className="space-y-1">
-                              {(() => {
-                                const dist = calculateDistribution();
-                                if (!dist) return null;
-                                return Array.from(selectedTelecallersForDistribution).map((telecallerId) => {
-                                  const tc = telecallers.find((t) => t.id === telecallerId);
-                                  const count = dist[telecallerId];
-                                  return (
-                                    <div key={telecallerId} className="flex justify-between text-xs">
-                                      <span className="text-gray-700">{tc?.fullName}:</span>
-                                      <span className="font-semibold text-green-700">{count} leads</span>
-                                    </div>
-                                  );
-                                });
-                              })()}
-                            </div>
-                          </div>
-                        )}
-
-                        <Button
-                          onClick={handleSmartDistribution}
-                          disabled={selectedTelecallersForDistribution.size === 0 || !totalLeadsForDistribution}
-                          className="w-full bg-green-600 hover:bg-green-700 text-white"
-                        >
-                          Distribute Now
-                        </Button>
-                      </div>
-                    )}
-                  </div>
+                   </div>
+                   <div className="flex gap-2">
+                     <Input type="number" placeholder="Total leads..." className="h-8 text-xs flex-1" value={totalLeadsForDistribution} onChange={e => setTotalLeadsForDistribution(e.target.value)} />
+                     <Button className="h-8 text-xs bg-indigo-600" disabled={isDistributing} onClick={handleSmartDistribution}>{isDistributing ? `${distributionProgress}%` : 'Start'}</Button>
+                   </div>
                 </div>
               )}
-
-              {leadsLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : filteredLeads.length === 0 ? (
-                <div className="text-center py-12">
-                  <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground">No leads found</p>
-                </div>
-              ) : (
-                <div className="rounded-lg border overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-muted/50">
-                        {statusFilter === "Unassigned" && (
-                          <TableHead className="w-12">
-                            <Checkbox
-                              checked={selectedLeads.size === filteredLeads.length}
-                              onCheckedChange={handleSelectAll}
-                            />
-                          </TableHead>
-                        )}
-                        <TableHead>Customer</TableHead>
-                        <TableHead className="hidden md:table-cell">Phone</TableHead>
-                        <TableHead className="hidden lg:table-cell">City</TableHead>
-                        <TableHead>Assigned To</TableHead>
-                        <TableHead className="text-right">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredLeads.map((lead) => (
-                        <TableRow key={lead.id} className="hover:bg-muted/50">
-                          {statusFilter === "Unassigned" && (
-                            <TableCell>
-                              <Checkbox
-                                checked={selectedLeads.has(lead.id)}
-                                onCheckedChange={() => handleSelectLead(lead.id)}
-                              />
-                            </TableCell>
-                          )}
-                          <TableCell>
-                            <div>
-                              <p className="font-medium text-sm">{lead.customerName}</p>
-                              <p className="text-xs text-muted-foreground">{lead.mobileNumber}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-sm">
-                            {lead.mobileNumber}
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell text-sm">
-                            {lead.city || "-"}
-                          </TableCell>
-
-
-                          <TableCell className="text-sm">
-                            {lead.assignedTo
-                              ? telecallers.find((t) => t.id === lead.assignedTo)?.fullName ||
-                                "Unknown"
-                              : "-"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {!lead.assignedTo && (
-                              <AssignLeadDialog
-                                lead={lead}
-                                telecallers={telecallers}
-                                onAssign={(telecallerId) => {
-                                  assignMutation.mutate({
-                                    leadId: lead.id,
-                                    telecallerId,
-                                  });
-                                }}
-                                isLoading={assignMutation.isPending}
-                              />
-                            )}
-                            {lead.assignedTo && (
-                              <ReassignLeadDialog
-                                lead={lead}
-                                telecallers={telecallers}
-                                onAssign={(telecallerId) => {
-                                  assignMutation.mutate({
-                                    leadId: lead.id,
-                                    telecallerId,
-                                  });
-                                }}
-                                isLoading={assignMutation.isPending}
-                              />
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Bulk Assign Dialog */}
-      <Dialog open={bulkAssignDialog} onOpenChange={setBulkAssignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign {selectedLeads.size} Leads</DialogTitle>
-            <DialogDescription>
-              Select a telecaller to assign all selected leads
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div>
-              <p className="text-sm font-semibold mb-3">Assign to Telecaller</p>
-              <Select value={bulkAssignTo} onValueChange={setBulkAssignTo}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select telecaller..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {telecallers.map((tc) => (
-                    <SelectItem key={tc.id} value={tc.id}>
-                      {tc.fullName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
-
-            {bulkAssignTo && (
-              <Card className="bg-blue-50">
-                <CardContent className="pt-4">
-                  <p className="text-sm">
-                    <strong>{selectedLeads.size} leads</strong> will be assigned to{" "}
-                    <strong>
-                      {telecallers.find((t) => t.id === bulkAssignTo)?.fullName}
-                    </strong>
-                  </p>
-                </CardContent>
-              </Card>
-            )}
           </div>
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setBulkAssignDialog(false)}
-              disabled={bulkAssignMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleBulkAssign}
-              disabled={!bulkAssignTo || bulkAssignMutation.isPending}
-              className="bg-gradient-accent text-white"
-            >
-              {bulkAssignMutation.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Assigning...
-                </>
-              ) : (
-                "Confirm Assignment"
-              )}
-            </Button>
-          </DialogFooter>
+          <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full">
+            <TabsList className="w-full grid grid-cols-3 h-9 p-1 bg-white border">
+              <TabsTrigger value="Unassigned" className="text-[10px] h-7">Unassigned</TabsTrigger>
+              <TabsTrigger value="Assigned" className="text-[10px] h-7">Assigned</TabsTrigger>
+              <TabsTrigger value="In Progress" className="text-[10px] h-7">Progress</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value={statusFilter} className="mt-3">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
+                  <div className="relative flex-1 max-w-[200px]">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+                    <Input placeholder="Search..." className="h-7 pl-7 text-[10px] border-none bg-transparent" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+                  </div>
+                  <div className="text-[9px] font-bold text-slate-400 uppercase">Selected: {selectedLeads.size}</div>
+                </div>
+
+                <div ref={parentRef} className="h-[450px] overflow-auto">
+                  <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                    {rowVirtualizer.getVirtualItems().map((vRow) => {
+                      const lead = allLeads[vRow.index];
+                      if (!lead) return <div key={vRow.key} className="absolute top-0 left-0 w-full flex justify-center p-4" style={{ height: `${vRow.size}px`, transform: `translateY(${vRow.start}px)` }}><Loader2 className="h-4 w-4 animate-spin" /></div>;
+
+                      return (
+                        <div key={vRow.key} className={`absolute top-0 left-0 w-full border-b flex items-center px-3 transition-colors ${selectedLeads.has(lead.id) ? 'bg-blue-50' : ''}`} style={{ height: `${vRow.size}px`, transform: `translateY(${vRow.start}px)` }}>
+                           <div className="flex items-center gap-3 w-full">
+                              <Checkbox checked={selectedLeads.has(lead.id)} onCheckedChange={() => handleSelectLead(lead.id)} className="h-4 w-4" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-bold text-slate-900 truncate">{lead.customerName}</p>
+                                  <p className="text-[9px] font-medium text-slate-400">{lead.mobileNumber}</p>
+                                </div>
+                                <div className="flex items-center justify-between mt-0.5">
+                                  <p className="text-[10px] text-slate-500 truncate">{lead.city || 'No City'}</p>
+                                  <div className="flex items-center gap-2">
+                                     {lead.assignedTo ? (
+                                       <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded border border-green-100">{telecallers.find(t => t.id === lead.assignedTo)?.fullName.split(' ')[0]}</span>
+                                     ) : (
+                                       <Select onValueChange={tid => assignMutation.mutate({ leadId: lead.id, telecallerId: tid })}>
+                                         <SelectTrigger className="h-5 text-[8px] w-20 px-1.5 border-slate-300">
+                                            <SelectValue placeholder="Assign" />
+                                         </SelectTrigger>
+                                         <SelectContent>
+                                           {telecallers.map(t => <SelectItem key={t.id} value={t.id} className="text-[10px]">{t.fullName}</SelectItem>)}
+                                         </SelectContent>
+                                       </Select>
+                                     )}
+                                  </div>
+                                </div>
+                              </div>
+                           </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </div>
+
+      <Dialog open={bulkAssignDialog} onOpenChange={setBulkAssignDialog}>
+        <DialogContent className="max-w-[90vw] rounded-2xl">
+          <DialogHeader><DialogTitle className="text-base">Batch Assign {selectedLeads.size} Leads</DialogTitle></DialogHeader>
+          <div className="py-4 space-y-4">
+            <Select value={bulkAssignTo} onValueChange={setBulkAssignTo}>
+              <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Select Team Member" /></SelectTrigger>
+              <SelectContent>{telecallers.map(tc => <SelectItem key={tc.id} value={tc.id}>{tc.fullName}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <DialogFooter><Button className="w-full bg-blue-600" disabled={!bulkAssignTo} onClick={async () => { 
+            setIsDistributing(true); 
+            const ids = Array.from(selectedLeads);
+            const batch = writeBatch(db);
+            ids.forEach(id => batch.update(doc(db, "leads", id), { assignedTo: bulkAssignTo, assignedAt: serverTimestamp(), leadStatus: "Assigned" }));
+            await batch.commit();
+            qc.invalidateQueries({ queryKey: ["leads-assignment-infinite"] });
+            setSelectedLeads(new Set());
+            setIsDistributing(false);
+            setBulkAssignTo("");
+            setBulkAssignDialog(false);
+            toast.success("Assigned Successfully");
+          }}>Confirm Assignment</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function AssignLeadDialog({
-  lead,
-  telecallers,
-  onAssign,
-  isLoading,
-}: {
-  lead: Lead;
-  telecallers: User[];
-  onAssign: (id: string) => void;
-  isLoading: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState("");
-
-  const handleAssign = () => {
-    if (selectedId) {
-      onAssign(selectedId);
-      setOpen(false);
-      setSelectedId("");
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => setOpen(true)}
-        className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-      >
-        <Send className="h-4 w-4" />
-      </Button>
-
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Assign Lead</DialogTitle>
-          <DialogDescription>Assign this lead to a telecaller</DialogDescription>
-        </DialogHeader>
-
-        <Select value={selectedId} onValueChange={setSelectedId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select telecaller..." />
-          </SelectTrigger>
-          <SelectContent>
-            {telecallers.map((tc) => (
-              <SelectItem key={tc.id} value={tc.id}>
-                {tc.fullName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleAssign}
-            disabled={!selectedId || isLoading}
-            className="bg-gradient-accent text-white"
-          >
-            {isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            Assign
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ReassignLeadDialog({
-  lead,
-  telecallers,
-  onAssign,
-  isLoading,
-}: {
-  lead: Lead;
-  telecallers: User[];
-  onAssign: (id: string) => void;
-  isLoading: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState(lead.assignedTo || "");
-
-  const handleReassign = () => {
-    if (selectedId && selectedId !== lead.assignedTo) {
-      onAssign(selectedId);
-      setOpen(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => setOpen(true)}
-        className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-      >
-        <RotateCw className="h-4 w-4" />
-      </Button>
-
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Reassign Lead</DialogTitle>
-          <DialogDescription>
-            Currently assigned to: {telecallers.find((t) => t.id === lead.assignedTo)?.fullName}
-          </DialogDescription>
-        </DialogHeader>
-
-        <Select value={selectedId} onValueChange={setSelectedId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select telecaller..." />
-          </SelectTrigger>
-          <SelectContent>
-            {telecallers.map((tc) => (
-              <SelectItem key={tc.id} value={tc.id}>
-                {tc.fullName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleReassign}
-            disabled={selectedId === lead.assignedTo || isLoading}
-            className="bg-gradient-accent text-white"
-          >
-            {isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            Reassign
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

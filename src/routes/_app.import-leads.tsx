@@ -103,17 +103,16 @@ function ImportLeadsPage() {
     queryKey: ["import-batches"],
     enabled: !!user,
     queryFn: async () => {
-      const q = query(
-        collection(db, "leadImportBatches"),
-        where("uploadedBy", "==", user!.uid),
-        orderBy("uploadedAt", "desc"),
-      );
+      const q = query(collection(db, "leadImportBatches"));
       const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-        uploadedAt: d.data().uploadedAt?.toDate?.() || new Date(),
-      })) as ImportBatch[];
+      return snap.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+          uploadedAt: d.data().uploadedAt?.toDate?.() || new Date(),
+        }))
+        .filter(b => b.uploadedBy === user?.uid)
+        .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime()) as ImportBatch[];
     },
   });
 

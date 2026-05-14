@@ -1,86 +1,69 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "@/services/firestore/client";
-import { signOut as firebaseSignOut } from "firebase/auth";
-import type { User as FirebaseUser } from "firebase/auth";
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { authService } from '@/services/authService';
+import { useQuery } from '@tanstack/react-query';
 
-export type AppRole = "admin" | "telecaller";
-
-interface AuthContextValue {
-  user: FirebaseUser | null;
-  role: AppRole | null;
-  fullName: string | null;
+interface AuthContextType {
+  user: any;
+  profile: any;
   loading: boolean;
-  signOut: () => Promise<void>;
-  refreshRole: () => Promise<void>;
+  role: string | null;
+  isAdmin: boolean;
+  isTelecaller: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AuthContext = createContext<AuthContextType | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [role, setRole] = useState<AppRole | null>(null);
-  const [fullName, setFullName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadProfile = async (uid: string) => {
-    try {
-      const userDoc = await getDoc(doc(db, "users", uid));
-      if (userDoc.exists()) {
-        const data = userDoc.data();
-        if (data.isActive === false || data.deletedAt) {
-          setRole(null);
-          setFullName(null);
-          await firebaseSignOut(auth);
-          return;
-        }
-        setRole((data.role as AppRole) || "telecaller");
-        setFullName(data.fullName || null);
-      } else {
-        setRole(null);
-        setFullName(null);
-        await firebaseSignOut(auth);
-      }
-    } catch (error) {
-      console.error("Failed to load profile:", error);
-      setRole(null);
-      setFullName(null);
-      await firebaseSignOut(auth);
-    }
-  };
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [fbUser, setFbUser] = useState<any>(null);
+  const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        await loadProfile(currentUser.uid);
-      } else {
-        setRole(null);
-        setFullName(null);
-      }
-      setLoading(false);
+    const unsubscribe = authService.onAuthStateChanged((user) => {
+      setFbUser(user);
+      setInitializing(false);
     });
-
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
-  const value: AuthContextValue = {
-    user,
-    role,
-    fullName,
-    loading,
-    signOut: () => firebaseSignOut(auth),
-    refreshRole: async () => {
-      if (user) await loadProfile(user.uid);
-    },
+  const { data: profile, isLoading: profileLoading } = useQuery({
+    queryKey: ["profile", fbUser?.uid],
+    queryFn: () => fbUser ? authService.getUserProfile(fbUser.uid, fbUser.email) : null,
+    enabled: !!fbUser,
+  });
+
+  // Use the same ID logic as the hook
+  const appUser = fbUser ? {
+    ...fbUser,
+    uid: (profile as any)?.id || fbUser.uid,
+    displayName: (profile as any)?.fullName || fbUser.displayName,
+  } : null;
+
+  const login = async (email: string, password: string) => {
+    await authService.signIn(email, password);
+  };
+
+  const logout = async () => {
+    await authService.signOut();
+  };
+
+  const value = {
+    user: appUser,
+    profile,
+    loading: initializing || profileLoading,
+    role: profile?.role || null,
+    isAdmin: profile?.role === 'admin',
+    isTelecaller: profile?.role === 'telecaller',
+    login,
+    logout,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
-}
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  return context;
+};

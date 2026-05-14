@@ -13,7 +13,7 @@ import {
   Send,
   CheckCircle2,
 } from "lucide-react";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -38,7 +38,7 @@ const adminNav = [
 const tail = [{ to: "/settings", label: "Settings", icon: Settings }] as const;
 
 export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { role, signOut, fullName, user } = useAuth();
+  const { role, logout, profile, user } = useAuth();
   const path = useRouterState({ select: (r) => r.location.pathname });
 
   // Build navigation based on role
@@ -85,17 +85,17 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
       <div className="border-t border-sidebar-border p-3">
         <div className="flex items-center gap-3 px-2 py-2 rounded-md">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-accent text-white text-sm font-semibold">
-            {(fullName || user?.email || "U").charAt(0).toUpperCase()}
+            {(profile?.fullName || user?.email || "U").charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium truncate">{fullName || user?.email}</div>
+            <div className="text-sm font-medium truncate">{profile?.fullName || user?.email}</div>
             <div className="text-[11px] text-sidebar-foreground/60 capitalize">{role}</div>
           </div>
         </div>
         <Button
           variant="ghost"
           className="mt-2 w-full justify-start text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          onClick={() => signOut()}
+          onClick={() => logout()}
         >
           <LogOut className="h-4 w-4 mr-2" /> Logout
         </Button>

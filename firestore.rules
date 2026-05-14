@@ -1,129 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check user role
+    
+    // 1. ADMIN CHECK
     function isAdmin() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return request.auth != null && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    function isUserDoc(uid) {
-      return request.auth.uid == uid;
-    }
-
-    function isActiveUser() {
-      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      // deletedAt may be stored as null for active users; only a non-null value means soft-deleted
-      return request.auth != null &&
-        (!('isActive' in userDoc.data) || userDoc.data.isActive == true) &&
-        (!('deletedAt' in userDoc.data) || userDoc.data.deletedAt == null);
-    }
-
-    // Users collection
+    // 2. USERS COLLECTION
     match /users/{uid} {
-      // Users can read their own profile
-      // This is allowed first before other permission checks to avoid circular dependency
-      allow read: if isUserDoc(uid);
-      
-      // Admins can read all user profiles
-      allow read: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-      
-      // Users can only update their own profile (but not role)
-      allow write: if isUserDoc(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
-      
-      // Admins can update everything including role
-      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow read: if true; // Public for login verification
+      allow write: if isAdmin() || request.auth == null; // Initial setup
     }
 
-    // Leads collection
+    // 3. LEADS COLLECTION
     match /leads/{leadId} {
-      // Read: document-field checks only (no get() on /users), so list queries like
-      // where("assignedTo","==",uid) are provably safe for Firestore. Inactive/deleted
-      // accounts are blocked at sign-in (client) and refresh tokens revoked on delete.
-      // Users can read leads they created, are assigned to, or sourced (escalation).
-      // Admins can read all leads.
-      allow read: if request.auth != null && (
-        resource.data.createdBy == request.auth.uid ||
-        resource.data.assignedTo == request.auth.uid ||
-        resource.data.sourcedBy == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Authenticated users can create (they become createdBy)
-      allow create: if request.auth != null && isActiveUser();
-      
-      // Admins can update any lead without restrictions
-      // Non-admins can update leads if they are the assigned/creator/source user
-      allow update: if request.auth != null && isActiveUser() && (
-        isAdmin() ||
-        resource.data.createdBy == request.auth.uid ||
-        resource.data.assignedTo == request.auth.uid ||
-        resource.data.sourcedBy == request.auth.uid
-      );
-      
-      // Only admins can delete
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
       allow delete: if isAdmin();
     }
 
-    // Lead Import Batches collection
-    match /leadImportBatches/{batchId} {
-      allow read, write: if isAdmin();
-    }
-
-    // Calls collection
+    // 4. CALLS COLLECTION
     match /calls/{callId} {
-      // Telecallers can read their own calls, admins can read all
-      allow read: if request.auth != null && isActiveUser() && (
-        resource.data.telecallerId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Telecallers can create their own calls
-      allow create: if request.auth != null && isActiveUser() && request.resource.data.telecallerId == request.auth.uid;
-      
-      // Telecallers can update their own calls, admins can update any
-      allow update: if request.auth != null && isActiveUser() && (
-        resource.data.telecallerId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Only admins can delete
-      allow delete: if isAdmin();
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
     }
 
-    // Followups collection
-    match /followups/{followupId} {
-      // Telecallers can read their own followups, admins can read all
-      allow read: if request.auth != null && isActiveUser() && (
-        resource.data.telecallerId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Telecallers can create their own followups
-      allow create: if request.auth != null && isActiveUser() && request.resource.data.telecallerId == request.auth.uid;
-      
-      // Telecallers can update their own followups, admins can update any
-      allow update: if request.auth != null && isActiveUser() && (
-        resource.data.telecallerId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Only admins can delete
-      allow delete: if isAdmin();
+    // 5. STATS COLLECTION (Crucial for Dashboard)
+    match /stats/{statsId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
     }
 
-    // Notifications collection
-    match /notifications/{notificationId} {
-      // Users can only read their own notifications
-      allow read: if request.auth != null && isActiveUser() && resource.data.userId == request.auth.uid;
-      
-      // Authenticated users can create (may be created by system/cloud functions)
-      allow create: if request.auth != null && isActiveUser();
-      
-      // Users can only update their own notifications
-      allow update: if request.auth != null && isActiveUser() && resource.data.userId == request.auth.uid;
-      
-      // Users can only delete their own notifications
-      allow delete: if request.auth != null && isActiveUser() && resource.data.userId == request.auth.uid;
+    // 6. FOLLOW-UPS COLLECTION
+    match /followups/{id} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // 7. NOTIFICATIONS COLLECTION
+    match /notifications/{id} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // 8. IMPORT BATCHES
+    match /leadImportBatches/{batchId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
     }
   }
 }

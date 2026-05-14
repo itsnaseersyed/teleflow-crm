@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   collection,
@@ -9,12 +9,14 @@ import {
   doc,
   getDoc,
   updateDoc,
-  addDoc,
   serverTimestamp,
   orderBy,
+  limit,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/hooks/useAuth";
+import { useLeadMutations } from "@/hooks/useLeads";
+import { callService } from "@/services/callService";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,14 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -42,7 +36,6 @@ import {
   ChevronRight,
   Save,
   MapPin,
-  Target,
   Zap,
   Calendar,
   FileText,
@@ -73,36 +66,31 @@ interface Lead {
   id: string;
   customerName: string;
   mobileNumber: string;
-  city?: string;
+  city?: string | null;
   leadStatus: string;
-  lastCallStatus?: string;
-  lastCalledAt?: Date;
-  feedbackNotes?: string;
-  followUpDate?: string;
+  feedbackNotes?: string | null;
+  followUpDate?: string | null;
+  assignedTo?: string | null;
+  lastCallStatus?: string | null;
 }
 
 interface CallRecord {
   leadId: string;
   callStatus: string;
   feedbackNotes: string;
-  followUpDate?: string;
-  duration?: number;
+  followUpDate?: string | null;
 }
 
 function CallPage() {
   const { leadId } = Route.useParams();
-  const { user } = useAuth();
+  const { user, role, isAdmin } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
   const [callStatus, setCallStatus] = useState("");
   const [feedbackNotes, setFeedbackNotes] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
-  const [callStartTime, setCallStartTime] = useState<number | null>(null);
   const [callDuration, setCallDuration] = useState(0);
-  const [isCallActive, setIsCallActive] = useState(false);
-  
-
 
   // Fetch current lead
   const { data: currentLead, isLoading: leadLoading } = useQuery({
@@ -110,57 +98,83 @@ function CallPage() {
     enabled: !!leadId && !!user,
     queryFn: async () => {
       const snap = await getDoc(doc(db, "leads", leadId));
-
       if (!snap.exists()) throw new Error("Lead not found");
-
+      const d = snap.data();
       return {
         id: snap.id,
-        ...(snap.data() as any),
-        createdAt: snap.data().createdAt?.toDate?.() || new Date(),
-        lastCalledAt: snap.data().lastCalledAt?.toDate?.() || undefined,
+        ...d,
+        createdAt: d.createdAt?.toDate?.() || new Date(),
+        lastCalledAt: d.lastCalledAt?.toDate?.() || undefined,
       } as Lead;
     },
   });
 
-  // Fetch all user's assigned leads for navigation
+  // AUTO-LOAD HISTORY: Load existing data into form
+  useEffect(() => {
+    if (currentLead) {
+      // Load last status
+      setCallStatus(currentLead.lastCallStatus || "");
+      // Load last notes
+      setFeedbackNotes(currentLead.feedbackNotes || "");
+      // Load last date
+      setFollowUpDate(currentLead.followUpDate || "");
+    }
+  }, [currentLead]);
+
+  // Fetch all relevant leads for navigation
   const { data: allLeads = [] } = useQuery({
-    queryKey: ["user-leads", user?.uid],
+    queryKey: ["user-leads-nav", user?.uid, isAdmin],
     enabled: !!user,
     queryFn: async () => {
       if (!user) return [];
 
-      const q = query(collection(db, "leads"), where("assignedTo", "==", user.uid));
+      let q;
+      if (isAdmin) {
+        q = query(
+          collection(db, "leads"),
+          orderBy("createdAt", "desc"),
+          limit(100)
+        );
+      } else {
+        q = query(
+          collection(db, "leads"), 
+          where("assignedTo", "==", user.uid),
+          orderBy("createdAt", "desc"),
+          limit(100)
+        );
+      }
 
       const snap = await getDocs(q);
-      const leadsList = snap.docs
-        .map((d) => ({
-          id: d.id,
-          customerName: d.data().customerName,
-          leadStatus: d.data().leadStatus,
-          createdAt: d.data().createdAt?.toDate?.() || new Date(),
-        }))
-        .filter((l) => l.leadStatus === "Assigned");
-
-      // Sort by createdAt in ascending order (client-side)
-      return leadsList.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map(({ id, customerName }) => ({ id, customerName }));
+      return snap.docs.map((d) => ({ 
+        id: d.id, 
+        customerName: d.data().customerName 
+      }));
     },
   });
 
-
-
-  // Calculate current position in queue
   const currentIndex = allLeads.findIndex((l) => l.id === leadId);
-  const hasNext = currentIndex < allLeads.length - 1;
+  const hasNext = currentIndex !== -1 && currentIndex < allLeads.length - 1;
   const hasPrev = currentIndex > 0;
 
+  const { updateStatus } = useLeadMutations();
 
-
-  // Handle call save
   const saveMutation = useMutation({
     mutationFn: async (data: CallRecord) => {
       if (!user || !currentLead) throw new Error("Missing context");
 
-      const callRef = await addDoc(collection(db, "calls"), {
+      // Status mapping
+      const leadUpdateStatus =
+        data.callStatus === "Interested"
+          ? "Interested"
+          : data.callStatus === "Converted"
+            ? "Converted"
+            : data.callStatus === "Follow-Up Needed"
+              ? "Follow-Up"
+              : data.callStatus === "Not Interested"
+                ? "Not Interested"
+                : "In Progress";
+
+      await callService.logCall({
         leadId: currentLead.id,
         telecallerId: user.uid,
         customerName: currentLead.customerName,
@@ -170,55 +184,30 @@ function CallPage() {
         feedbackNotes: data.feedbackNotes,
         followUpDate: data.followUpDate || null,
         callDuration: callDuration,
-        createdAt: serverTimestamp(),
+      }, currentLead.leadStatus, leadUpdateStatus);
+
+      // Persist the actual selected status and notes to the lead doc for "History"
+      await updateStatus.mutateAsync({
+        leadId: currentLead.id,
+        oldStatus: currentLead.leadStatus,
+        newStatus: leadUpdateStatus,
+        userId: user.uid,
+        extraData: {
+          lastCallStatus: data.callStatus,
+          feedbackNotes: data.feedbackNotes,
+          followUpDate: data.followUpDate
+        }
       });
 
-      // Update lead status
-      const leadUpdateStatus =
-        data.callStatus === "Interested"
-          ? "Interested"
-          : data.callStatus === "Converted"
-            ? "Completed"
-            : data.callStatus === "Follow-Up Needed"
-              ? "Follow-Up"
-              : data.callStatus === "Not Interested"
-                ? "Not Interested"
-                : "In Progress";
-
-      await updateDoc(doc(db, "leads", currentLead.id), {
-        lastCallStatus: data.callStatus,
-        lastCalledAt: serverTimestamp(),
-        feedbackNotes: data.feedbackNotes,
-        followUpDate: data.followUpDate || null,
-        leadStatus: leadUpdateStatus,
-      });
-
-      // Create follow-up if needed
-      if (data.followUpDate) {
-        await addDoc(collection(db, "followups"), {
-          leadId: currentLead.id,
-          telecallerId: user.uid,
-          followupDate: new Date(data.followUpDate),
-          status: "Pending",
-          createdAt: serverTimestamp(),
-        });
-      }
-
-      return callRef.id;
+      return true;
     },
     onSuccess: async () => {
       toast.success("Call saved successfully!");
       qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["my-leads"] });
-      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
-      qc.invalidateQueries({ queryKey: ["user-leads"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
       qc.invalidateQueries({ queryKey: ["followups"] });
       qc.invalidateQueries({ queryKey: ["lead", leadId] });
 
-
-
-      // Auto go to next lead
       if (hasNext) {
         setTimeout(() => {
           navigate({
@@ -237,17 +226,21 @@ function CallPage() {
     },
   });
 
+  const isSaveDisabled = 
+    saveMutation.isPending || 
+    !callStatus || 
+    (callStatus === "Follow-Up Needed" && !followUpDate);
+
   const handleSaveCall = () => {
-    if (!callStatus) {
-      toast.error("Please select a call status");
+    if (callStatus === "Follow-Up Needed" && !followUpDate) {
+      toast.error("Please select a follow-up date");
       return;
     }
-
     saveMutation.mutate({
       leadId: leadId!,
       callStatus,
       feedbackNotes,
-      followUpDate: followUpDate || undefined,
+      followUpDate: followUpDate || null,
     });
   };
 
@@ -258,11 +251,6 @@ function CallPage() {
         to: "/lead/$leadId/call",
         params: { leadId: allLeads[newIndex].id },
       });
-      setCallStatus("");
-      setFeedbackNotes("");
-      setFollowUpDate("");
-      setCallDuration(0);
-      setIsCallActive(false);
     }
   };
 
@@ -288,7 +276,7 @@ function CallPage() {
       <div className="flex items-center justify-between">
         <Button
           variant="outline"
-          onClick={() => navigate({ to: "/my-leads" })}
+          onClick={() => navigate({ to: role === 'admin' ? '/leads' : '/my-leads' })}
           className="gap-2"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -296,8 +284,8 @@ function CallPage() {
         </Button>
 
         <div className="text-center">
-          <p className="text-sm text-muted-foreground">
-            Lead {currentIndex + 1} of {allLeads.length}
+          <p className="text-sm font-semibold">
+            {currentIndex !== -1 ? `Lead ${currentIndex + 1} of ${allLeads.length}` : "Navigating Queue..."}
           </p>
         </div>
 
@@ -337,13 +325,8 @@ function CallPage() {
 
             <CardContent className="space-y-4">
               <div className="flex gap-3 mb-4">
-                <a
-                  href={`tel:${currentLead.mobileNumber}`}
-                  className="flex-1"
-                >
-                  <Button
-                    className="w-full bg-gradient-accent text-white gap-2 font-semibold"
-                  >
+                <a href={`tel:${currentLead.mobileNumber}`} className="flex-1">
+                  <Button className="w-full bg-gradient-accent text-white gap-2 font-semibold">
                     <Phone className="h-4 w-4" />
                     Dial Number
                   </Button>
@@ -375,23 +358,6 @@ function CallPage() {
                   </div>
                 )}
               </div>
-
-
-
-              {currentLead.lastCallStatus && (
-                <Alert className="bg-blue-50 border-blue-200">
-                  <AlertCircle className="h-4 w-4 text-blue-600" />
-                  <AlertDescription className="text-blue-800">
-                    <p className="text-xs font-semibold mb-1">Previous Call</p>
-                    <p className="text-sm">
-                      Last Status: <strong>{currentLead.lastCallStatus}</strong>
-                    </p>
-                    {currentLead.feedbackNotes && (
-                      <p className="text-sm mt-1">Notes: {currentLead.feedbackNotes}</p>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
             </CardContent>
           </Card>
 
@@ -407,15 +373,12 @@ function CallPage() {
                   <Zap className="h-4 w-4" />
                   Call Status *
                 </Label>
-                <Select
-                  value={callStatus}
-                  onValueChange={setCallStatus}
-                >
+                <Select value={callStatus} onValueChange={setCallStatus}>
                   <SelectTrigger id="call-status">
                     <SelectValue placeholder="Select call status..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {CALL_STATUSES.map((status) => (
+                    {CALL_STATUSES.filter(s => role === 'admin' || s !== 'Converted').map((status) => (
                       <SelectItem key={status} value={status}>
                         {status}
                       </SelectItem>
@@ -442,28 +405,22 @@ function CallPage() {
               <div className="space-y-2">
                 <Label htmlFor="follow-up" className="flex items-center gap-2">
                   <Calendar className="h-4 w-4" />
-                  Follow-up Date (Optional)
+                  Follow-up Date {callStatus === "Follow-Up Needed" ? "*" : "(Optional)"}
                 </Label>
                 <Input
                   id="follow-up"
                   type="date"
                   value={followUpDate}
                   onChange={(e) => setFollowUpDate(e.target.value)}
+                  disabled={callStatus !== "Follow-Up Needed"}
+                  className={callStatus !== "Follow-Up Needed" ? "opacity-50 cursor-not-allowed" : ""}
                 />
               </div>
 
               <div className="flex gap-3 pt-4 flex-wrap">
                 <Button
-                  variant="outline"
-                  onClick={() => navigate({ to: "/my-leads" })}
-                  disabled={saveMutation.isPending}
-                >
-                  Cancel
-                </Button>
-                
-                <Button
                   onClick={handleSaveCall}
-                  disabled={saveMutation.isPending || !callStatus}
+                  disabled={isSaveDisabled}
                   className="flex-1 bg-gradient-accent text-white gap-2"
                 >
                   {saveMutation.isPending ? (
@@ -478,6 +435,25 @@ function CallPage() {
                     </>
                   )}
                 </Button>
+
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-200 text-orange-600 hover:bg-orange-50 gap-2 mt-2"
+                  disabled={saveMutation.isPending}
+                  onClick={async () => {
+                    if (!confirm("Escalate this lead to a senior?")) return;
+                    await updateDoc(doc(db, "leads", leadId!), {
+                      escalationStatus: "pending_senior",
+                      escalatedAt: serverTimestamp(),
+                      escalationNotes: feedbackNotes || "Manual escalation"
+                    });
+                    toast.success("Lead escalated to senior!");
+                    navigate({ to: "/my-leads" });
+                  }}
+                >
+                  <ArrowUp className="h-4 w-4" />
+                  Escalate to Senior
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -485,23 +461,21 @@ function CallPage() {
 
         <div className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Queue Progress</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-base">Queue Progress</CardTitle></CardHeader>
             <CardContent>
               <div className="space-y-3">
                 <div>
                   <div className="flex justify-between mb-2">
                     <span className="text-sm font-medium">Position: {currentIndex + 1} / {allLeads.length}</span>
                     <span className="text-sm text-muted-foreground">
-                      {Math.round(((currentIndex + 1) / allLeads.length) * 100)}%
+                      {allLeads.length > 0 ? Math.round(((currentIndex + 1) / allLeads.length) * 100) : 0}%
                     </span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
                     <div
                       className="bg-gradient-accent h-full transition-all"
                       style={{
-                        width: `${((currentIndex + 1) / allLeads.length) * 100}%`,
+                        width: `${allLeads.length > 0 ? ((currentIndex + 1) / allLeads.length) * 100 : 0}%`,
                       }}
                     />
                   </div>
@@ -511,12 +485,10 @@ function CallPage() {
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Upcoming Leads</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-base">Upcoming Leads</CardTitle></CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {allLeads.slice(currentIndex, currentIndex + 3).map((lead, idx) => (
+                {allLeads.slice(currentIndex !== -1 ? currentIndex : 0, (currentIndex !== -1 ? currentIndex : 0) + 3).map((lead, idx) => (
                   <div
                     key={lead.id}
                     className={`p-2 rounded-lg text-sm ${

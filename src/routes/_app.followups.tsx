@@ -1,13 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { collection, query, orderBy, getDocs, updateDoc, doc, where } from "firebase/firestore";
-import { db } from "@/services/firestore/client";
-import { useAuth } from "@/lib/auth";
-import { CalendarClock, Check, Clock, AlertCircle, Phone, MessageCircle, Pencil } from "lucide-react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { useFollowups, useFollowupMutations } from "@/hooks/useFollowups";
+import { CalendarClock, Check, Phone, MessageCircle, Pencil, User, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
-import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { collection, getDocs, query } from "firebase/firestore";
+import { db } from "@/services/firestore/client";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 export const Route = createFileRoute("/_app/followups")({
   component: FollowupsPage,
@@ -19,7 +20,7 @@ type Followup = {
   followupDate: string;
   notes: string | null;
   status: string;
-  // denormalized from lead doc
+  telecallerId?: string;
   customerName?: string;
   mobileNumber?: string;
 };
@@ -28,146 +29,97 @@ function FollowupsPage() {
   const { role, user } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"today" | "upcoming" | "overdue" | "completed">("today");
+  const [status, setStatus] = useState<string>("Pending");
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  const { data: items = [], isLoading } = useQuery({
-    queryKey: ["followups", role, user?.uid],
-    enabled: !!user && !!role,
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    error,
+    refetch
+  } = useFollowups(role === "admin" ? undefined : user?.uid, status);
+
+  // Fetch users for name mapping
+  const { data: users = [] } = useQuery({
+    queryKey: ["users-list-followup"],
     queryFn: async () => {
-      // Build base query — telecallers only see their own, admins see all
-      let q;
-      if (role !== "admin" && user) {
-        q = query(
-          collection(db, "followups"),
-          where("telecallerId", "==", user.uid),
-        );
-      } else {
-        q = query(collection(db, "followups"));
-      }
-
+      const q = query(collection(db, "users"));
       const snapshot = await getDocs(q);
-      const followups = snapshot.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          leadId: data.leadId ?? null,
-          followupDate: data.followupDate?.toDate
-            ? data.followupDate.toDate().toISOString()
-            : String(data.followupDate ?? ""),
-          notes: data.notes ?? null,
-          status: data.status ?? "Pending",
-          // denormalized fields stored at write time
-          customerName: data.customerName ?? null,
-          mobileNumber: data.mobileNumber ?? null,
-        } as Followup;
-      });
-
-      // Sort by followupDate in ascending order (client-side)
-      followups.sort((a, b) => new Date(a.followupDate).getTime() - new Date(b.followupDate).getTime());
-
-      // If any followup is missing customer info, batch-fetch the lead docs
-      const missing = followups.filter((f) => !f.customerName && f.leadId);
-      if (missing.length > 0) {
-        const leadIds = [...new Set(missing.map((f) => f.leadId!))];
-        const leadDocs = await Promise.all(
-          leadIds.map((id) => getDocs(query(collection(db, "leads"), where("__name__", "==", id)))),
-        );
-        const leadMap: Record<string, { customerName: string; mobileNumber: string }> = {};
-        leadDocs.forEach((snap) => {
-          snap.docs.forEach((d) => {
-            const ld = d.data();
-            leadMap[d.id] = {
-              customerName: ld.customerName ?? "Lead",
-              mobileNumber: ld.mobileNumber ?? "",
-            };
-          });
-        });
-        return followups.map((f) =>
-          f.leadId && leadMap[f.leadId] ? { ...f, ...leadMap[f.leadId] } : f,
-        );
-      }
-
-      return followups;
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        fullName: doc.data().fullName || doc.data().email || "User",
+      }));
     },
+    enabled: role === "admin",
   });
 
-  const now = new Date();
-  const startToday = new Date();
-  startToday.setHours(0, 0, 0, 0);
-  const endToday = new Date();
-  endToday.setHours(23, 59, 59, 999);
+  const usersMap = new Map(users.map((u) => [u.id, u.fullName]));
+  const { complete } = useFollowupMutations();
+  
+  const allFollowups = useMemo(() => {
+    const fetched = data?.pages.flatMap((page: any) => page.items) ?? [];
+    // Strict uniqueness filter to prevent React Key errors
+    const uniqueMap = new Map();
+    fetched.forEach(item => {
+      if (item && item.id) uniqueMap.set(item.id, item);
+    });
+    return Array.from(uniqueMap.values());
+  }, [data]);
 
-  const buckets = {
-    today: items.filter(
-      (f) =>
-        f.status === "Pending" &&
-        new Date(f.followupDate) >= startToday &&
-        new Date(f.followupDate) <= endToday,
-    ),
-    upcoming: items.filter((f) => f.status === "Pending" && new Date(f.followupDate) > endToday),
-    overdue: items.filter((f) => f.status === "Pending" && new Date(f.followupDate) < startToday),
-    completed: items.filter((f) => f.status === "Completed"),
-  };
-
-  const complete = useMutation({
-    mutationFn: async (id: string) => {
-      await updateDoc(doc(db, "followups", id), { status: "Completed" });
-    },
-    onSuccess: () => {
-      toast.success("Marked complete");
-      qc.invalidateQueries({ queryKey: ["followups"] });
-    },
-    onError: (e: any) => toast.error(e.message),
+  // Virtualizer setup
+  const rowVirtualizer = useVirtualizer({
+    count: hasNextPage ? allFollowups.length + 1 : allFollowups.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 90,
+    overscan: 10,
   });
 
-  const tabs: { key: typeof tab; label: string; icon: any; count: number; tone: string }[] = [
-    {
-      key: "today",
-      label: "Today",
-      icon: CalendarClock,
-      count: buckets.today.length,
-      tone: "text-secondary",
-    },
-    {
-      key: "upcoming",
-      label: "Upcoming",
-      icon: Clock,
-      count: buckets.upcoming.length,
-      tone: "text-accent-foreground",
-    },
-    {
-      key: "overdue",
-      label: "Overdue",
-      icon: AlertCircle,
-      count: buckets.overdue.length,
-      tone: "text-destructive",
-    },
-    {
-      key: "completed",
-      label: "Completed",
-      icon: Check,
-      count: buckets.completed.length,
-      tone: "text-success",
-    },
+  // Infinite scroll trigger
+  useEffect(() => {
+    const virtualItems = rowVirtualizer.getVirtualItems();
+    if (virtualItems.length === 0) return;
+    
+    const lastItem = virtualItems[virtualItems.length - 1];
+    if (
+      lastItem.index >= allFollowups.length - 1 &&
+      hasNextPage &&
+      !isFetchingNextPage
+    ) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, allFollowups.length, rowVirtualizer.getVirtualItems(), fetchNextPage]);
+
+  const tabs = [
+    { key: "Pending", label: "Pending", icon: CalendarClock, tone: "text-secondary" },
+    { key: "Completed", label: "Completed", icon: Check, tone: "text-success" },
   ];
 
-  const list = buckets[tab];
-
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight">Follow-Ups</h2>
-        <p className="text-sm text-muted-foreground">Stay on top of every commitment.</p>
+    <div className="space-y-5 h-full flex flex-col">
+      <div className="flex justify-between items-start shrink-0">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">Follow-Ups</h2>
+          <p className="text-sm text-muted-foreground">Stay on top of every commitment.</p>
+        </div>
+        <Button variant="ghost" size="icon" onClick={() => {
+          qc.invalidateQueries({ queryKey: ["followups"] });
+          refetch();
+        }}>
+          <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+        </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 grid-cols-2 shrink-0">
         {tabs.map((t) => {
           const Icon = t.icon;
-          const active = tab === t.key;
+          const active = status === t.key;
           return (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => setStatus(t.key)}
               className={cn(
                 "rounded-xl border bg-card p-4 text-left shadow-card transition-all",
                 active ? "ring-2 ring-secondary shadow-soft" : "hover:shadow-soft",
@@ -179,85 +131,139 @@ function FollowupsPage() {
                 </div>
                 <Icon className={cn("h-4 w-4", t.tone)} />
               </div>
-              <div className="mt-2 text-2xl font-semibold">{t.count}</div>
             </button>
           );
         })}
       </div>
 
-      <div className="rounded-xl border bg-card shadow-card divide-y">
-        {isLoading && <div className="p-6 text-sm text-muted-foreground">Loading…</div>}
-        {!isLoading && list.length === 0 && (
-          <div className="p-12 text-center text-sm text-muted-foreground">
-            Nothing here. Enjoy a quiet moment ✨
+      {error && (
+        <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm shrink-0">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="h-4 w-4" />
+            Error Loading Follow-ups
+          </div>
+          <p className="text-xs opacity-90 mt-1">{error.message}</p>
+        </div>
+      )}
+
+      <div 
+        ref={parentRef}
+        className="flex-1 overflow-auto rounded-xl border bg-card shadow-card relative"
+      >
+        {isLoading && <div className="p-6 text-sm text-muted-foreground flex items-center gap-2">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Loading follow-ups...
+        </div>}
+
+        {!isLoading && allFollowups.length === 0 && (
+          <div className="p-12 text-center text-sm text-muted-foreground space-y-2">
+            <div className="text-2xl">✨</div>
+            <p>No {status.toLowerCase()} follow-ups found.</p>
           </div>
         )}
-        {list.map((f) => (
-          <div key={f.id} className="flex items-center justify-between p-4 gap-3">
-            <div className="min-w-0">
-              <div className="font-medium text-sm truncate">{f.customerName ?? "Lead"}</div>
-              <div className="text-xs text-muted-foreground">
-                {f.mobileNumber ?? ""} · {new Date(f.followupDate).toLocaleString()}
-              </div>
-              {f.notes && (
-                <div className="text-xs text-muted-foreground mt-1 truncate">"{f.notes}"</div>
-              )}
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              {f.mobileNumber && (
-                <>
-                  <a
-                    href={`tel:${f.mobileNumber}`}
-                    onClick={(e) => e.stopPropagation()}
-                    title="Call"
-                  >
-                    <Button size="icon" variant="ghost">
-                      <Phone className="h-4 w-4" />
-                    </Button>
-                  </a>
-                  <a
-                    href={`https://wa.me/${f.mobileNumber.replace(/\D/g, "")}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    title="WhatsApp"
-                  >
-                    <Button size="icon" variant="ghost">
-                      <MessageCircle className="h-4 w-4 text-success" />
-                    </Button>
-                  </a>
-                </>
-              )}
-              {f.leadId && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate({
-                      to: "/lead/$leadId/call",
-                      params: { leadId: f.leadId! },
-                    });
+
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const isLoaderRow = virtualRow.index > allFollowups.length - 1;
+            const f = allFollowups[virtualRow.index];
+
+            if (isLoaderRow) {
+              return (
+                <div
+                  key="loader"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
                   }}
-                  title="Log Call / Reschedule"
+                  className="flex items-center justify-center p-4"
                 >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              )}
-              {f.status === "Pending" && (
-                <Button
-                  size="sm"
-                  className="bg-success text-success-foreground hover:opacity-95 h-8 px-3 ml-2 font-medium"
-                  onClick={() => complete.mutate(f.id)}
-                  disabled={complete.isPending}
-                >
-                  Mark done
-                </Button>
-              )}
-            </div>
-          </div>
-        ))}
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              );
+            }
+
+            const assignedName = usersMap.get(f.telecallerId || "") || "User";
+
+            return (
+              <div
+                key={f.id}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+                className="flex items-center justify-between p-4 gap-3 border-b last:border-0"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-sm truncate">{f.customerName ?? "Customer"}</div>
+                  <div className="flex flex-col gap-0.5 mt-0.5">
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                      <Phone className="h-3 w-3" />
+                      {f.mobileNumber ?? "No number"}
+                      <span className="mx-1 opacity-30">|</span>
+                      <CalendarClock className="h-3 w-3" />
+                      {typeof f.followupDate === 'string' ? f.followupDate : new Date(f.followupDate).toLocaleDateString()}
+                    </div>
+                    {role === "admin" && (
+                      <div className="flex items-center gap-1 text-[10px] text-blue-600 font-semibold mt-1">
+                        <User className="h-2.5 w-2.5" />
+                        Assigned: {assignedName}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {f.mobileNumber && (
+                    <a href={`tel:${f.mobileNumber}`} title="Call">
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-blue-600 hover:bg-blue-50">
+                        <Phone className="h-4 w-4" />
+                      </Button>
+                    </a>
+                  )}
+                  {f.leadId && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-orange-600 hover:bg-orange-50"
+                      onClick={() => navigate({ to: "/lead/$leadId/call", params: { leadId: f.leadId! }})}
+                      title="Log Call"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {status === "Pending" && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 text-white hover:bg-emerald-700 h-8 px-3 ml-2 text-xs font-medium"
+                      onClick={() => complete.mutate({ id: f.id, leadId: f.leadId, userId: user?.uid! })}
+                      disabled={complete.isPending}
+                    >
+                      Done
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
+}
+
+function Loader2({ className }: { className?: string }) {
+  return <RefreshCw className={cn("h-4 w-4 animate-spin", className)} />;
 }

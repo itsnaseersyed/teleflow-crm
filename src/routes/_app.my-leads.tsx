@@ -1,14 +1,18 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
   collection,
   query,
   where,
   getDocs,
+  limit,
+  orderBy,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/hooks/useAuth";
+import { useQueue } from "@/hooks/useQueue";
+import { useUserStats } from "@/hooks/useDashboard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -50,7 +54,7 @@ interface Lead {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  leadStatus: "Assigned" | "In Progress" | "Completed" | "Follow-Up" | "Not Interested";
+  leadStatus: "Assigned" | "In Progress" | "Completed" | "Follow-Up" | "Not Interested" | "Converted";
   assignedTo: string;
   lastCallStatus?: string;
   lastCalledAt?: Date;
@@ -75,83 +79,33 @@ function MyLeadsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("Assigned");
 
-  // All leads assigned to this user (one Firestore query; tab filter is client-side)
-  const {
-    data: assignedLeads = [],
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
-    queryKey: ["my-leads", user?.uid],
-    enabled: !!user,
-    queryFn: async () => {
-      if (!user) return [];
+  // Realtime queue for the active work status
+  const { leads: assignedLeads, loading: queueLoading } = useQueue(user?.uid, filterStatus);
+  const { data: stats, isLoading: statsLoading } = useUserStats(user?.uid);
 
-      const q = query(collection(db, "leads"), where("assignedTo", "==", user.uid));
-
-      const snap = await getDocs(q);
-      const leadsList = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-        createdAt: d.data().createdAt?.toDate?.() || new Date(),
-        lastCalledAt: d.data().lastCalledAt?.toDate?.() || undefined,
-      })) as Lead[];
-
-      return leadsList.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    },
-  });
-
-  const leads = useMemo(() => {
-    return assignedLeads
-      .filter((lead) => {
-        if (filterStatus === "Assigned") {
-          return lead.leadStatus === "Assigned";
-        }
-        if (filterStatus === "In Progress") {
-          return lead.leadStatus === "In Progress";
-        }
-        if (filterStatus === "Follow-Up") {
-          return lead.leadStatus === "Follow-Up";
-        }
-        if (filterStatus === "Not Interested") {
-          return lead.leadStatus === "Not Interested";
-        }
-        if (filterStatus === "Completed") {
-          return lead.leadStatus === "Completed";
-        }
-        return lead.leadStatus === filterStatus;
-      })
-      .filter((lead) => lead.escalationStatus !== "pending_senior")
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  }, [assignedLeads, filterStatus]);
-
-  // Fetch converted leads sourced by current user (closed by senior)
+  // Still need converted leads for the sourced section
+  // Refactor: We'll fetch a limited set for the sourcing display
   const { data: convertedLeads = [], isLoading: convertedLoading } = useQuery({
     queryKey: ["my-converted-leads", user?.uid],
     enabled: !!user,
     queryFn: async () => {
       if (!user) return [];
-
-      const q = query(collection(db, "leads"), where("sourcedBy", "==", user.uid));
-
+      const q = query(
+        collection(db, "leads"), 
+        where("assignedTo", "==", user.uid),
+        where("leadStatus", "==", "Converted"),
+        orderBy("createdAt", "desc"),
+        limit(50)
+      );
       const snap = await getDocs(q);
-      return snap.docs
-        .map((d) => ({
-          id: d.id,
-          ...(d.data() as any),
-          createdAt: d.data().createdAt?.toDate?.() || new Date(),
-          lastCalledAt: d.data().lastCalledAt?.toDate?.() || undefined,
-        }))
-        .filter(
-          (l) =>
-            l.escalationStatus === "closed_by_senior" && l.leadStatus === "Completed"
-        )
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) as Lead[];
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Lead));
     },
   });
 
-  // Filter leads by search
-  const filteredLeads = leads.filter((lead) => {
+  const isLoading = queueLoading || statsLoading;
+
+  // Filter leads by search (client-side for the realtime set)
+  const filteredLeads = assignedLeads.filter((lead) => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -161,18 +115,6 @@ function MyLeadsPage() {
     );
   });
 
-  const notPendingEscalation = (l: Lead) => l.escalationStatus !== "pending_senior";
-
-  // Calculate statistics (across all assigned leads, excluding pending escalation queue)
-  const stats = {
-    total: assignedLeads.filter(notPendingEscalation).length,
-    pending: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Assigned").length,
-    inProgress: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "In Progress").length,
-    followUp: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Follow-Up").length,
-    notInterested: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Not Interested").length,
-    completed: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Completed").length,
-    converted: convertedLeads.length,
-  };
 
   const handleStartCall = (leadId: string) => {
     navigate({
@@ -197,7 +139,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-muted-foreground mb-1 uppercase">Total</p>
-              <p className="text-3xl font-bold">{stats.total}</p>
+              <p className="text-3xl font-bold">{stats?.totalLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -205,7 +147,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-blue-600 mb-1 uppercase font-semibold">Pending</p>
-              <p className="text-3xl font-bold text-blue-700">{stats.pending}</p>
+              <p className="text-3xl font-bold text-blue-700">{stats?.assignedLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -213,7 +155,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-amber-600 mb-1 uppercase font-semibold">In Progress</p>
-              <p className="text-3xl font-bold text-amber-700">{stats.inProgress}</p>
+              <p className="text-3xl font-bold text-amber-700">{stats?.inProgressLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -221,7 +163,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-orange-600 mb-1 uppercase font-semibold">Follow-Up</p>
-              <p className="text-3xl font-bold text-orange-700">{stats.followUp}</p>
+              <p className="text-3xl font-bold text-orange-700">{stats?.followUpLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -229,7 +171,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-red-600 mb-1 uppercase font-semibold">Not Interested</p>
-              <p className="text-3xl font-bold text-red-700">{stats.notInterested}</p>
+              <p className="text-3xl font-bold text-red-700">{stats?.notInterestedLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -237,7 +179,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-green-600 mb-1 uppercase font-semibold">Completed</p>
-              <p className="text-3xl font-bold text-green-700">{stats.completed}</p>
+              <p className="text-3xl font-bold text-green-700">{stats?.completedLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -245,7 +187,7 @@ function MyLeadsPage() {
           <CardContent className="pt-6">
             <div>
               <p className="text-xs text-purple-600 mb-1 uppercase font-semibold">Converted ⭐</p>
-              <p className="text-3xl font-bold text-purple-700">{stats.converted}</p>
+              <p className="text-3xl font-bold text-purple-700">{stats?.convertedLeads ?? 0}</p>
             </div>
           </CardContent>
         </Card>
@@ -258,7 +200,7 @@ function MyLeadsPage() {
             <div>
               <CardTitle>Lead Queue</CardTitle>
               <CardDescription>
-                {filteredLeads.length} of {leads.length} leads
+                {filteredLeads.length} leads in current status
               </CardDescription>
             </div>
             <div className="flex gap-3 flex-col sm:flex-row">
@@ -278,6 +220,7 @@ function MyLeadsPage() {
                   <SelectItem value="Follow-Up">Follow-Up</SelectItem>
                   <SelectItem value="Not Interested">Not Interested</SelectItem>
                   <SelectItem value="Completed">Completed</SelectItem>
+                  <SelectItem value="Converted">Converted</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -285,35 +228,18 @@ function MyLeadsPage() {
         </CardHeader>
 
         <CardContent>
-          {isError && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                Could not load leads: {(error as Error)?.message || "Unknown error"}. If this persists,
-                contact your administrator.
-              </AlertDescription>
-            </Alert>
-          )}
+
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : isError ? null : filteredLeads.length === 0 ? (
+          ) : filteredLeads.length === 0 ? (
             <div className="text-center py-12">
-              {stats.total === 0 ? (
-                <>
-                  <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="font-semibold mb-1">No leads assigned yet</p>
-                  <p className="text-sm text-muted-foreground">
-                    Your admin will assign leads to you. Check back later!
-                  </p>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground">No leads match your search</p>
-                </>
-              )}
+              <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+              <p className="font-semibold mb-1">No leads found</p>
+              <p className="text-sm text-muted-foreground">
+                Try changing your filter or search query.
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -351,7 +277,9 @@ function MyLeadsPage() {
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Clock className="h-4 w-4" />
                             <span className="text-xs">
-                              {lead.lastCalledAt.toLocaleDateString()}
+                              {(lead.lastCalledAt as any).toDate?.() 
+                                ? (lead.lastCalledAt as any).toDate().toLocaleDateString() 
+                                : new Date(lead.lastCalledAt).toLocaleDateString()}
                             </span>
                           </div>
                         )}
@@ -376,6 +304,7 @@ function MyLeadsPage() {
                             {lead.leadStatus === "Follow-Up" && "Follow-Up"}
                             {lead.leadStatus === "Not Interested" && "Not Interested"}
                             {lead.leadStatus === "Completed" && "Completed"}
+                            {lead.leadStatus === "Converted" && "Converted"}
                           </p>
                         </div>
                         <div className="flex items-center gap-1 justify-end">
@@ -422,12 +351,12 @@ function MyLeadsPage() {
       </Card>
 
       {/* My Converted Leads Section */}
-      {stats.converted > 0 && (
+      {(stats?.convertedLeads ?? 0) > 0 && (
         <Card className="border-purple-200 bg-purple-50">
           <CardHeader>
-            <CardTitle className="text-purple-900">⭐ Leads You Sourced & Got Converted</CardTitle>
+            <CardTitle className="text-purple-900">⭐ My Converted Leads</CardTitle>
             <CardDescription className="text-purple-800">
-              These leads were escalated to senior telecallers and successfully converted.
+              These are the leads you successfully handled that resulted in a conversion.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -463,10 +392,6 @@ function MyLeadsPage() {
                             <span>{lead.city}</span>
                           </div>
                         )}
-
-                        <div className="text-xs text-purple-600 font-semibold">
-                          Closed by: {lead.handledBy ? "Senior" : "---"}
-                        </div>
                       </div>
                     </div>
                     <div className="text-right">

@@ -1,8 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/services/firestore/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +12,7 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, login } = useAuth();
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,7 +26,7 @@ function LoginPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await login(email, password);
       toast.success("Welcome back!");
       nav({ to: "/dashboard" });
     } catch (error: any) {

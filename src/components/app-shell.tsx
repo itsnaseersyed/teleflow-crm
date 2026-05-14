@@ -2,7 +2,14 @@ import { useState, type ReactNode } from "react";
 import { Menu, Bell } from "lucide-react";
 import { AppSidebar } from "./app-sidebar";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { useRouterState } from "@tanstack/react-router";
 
 function pageTitle(path: string) {
@@ -23,7 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <div className="hidden md:block">
+      <div className="hidden md:block sticky top-0 h-screen overflow-y-auto border-r border-sidebar-border">
         <AppSidebar />
       </div>
 
@@ -36,6 +43,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Button>
             </SheetTrigger>
             <SheetContent side="left" className="p-0 w-64">
+              <SheetHeader className="sr-only">
+                <SheetTitle>Navigation Menu</SheetTitle>
+                <SheetDescription>Access different sections of the CRM</SheetDescription>
+              </SheetHeader>
               <AppSidebar onNavigate={() => setOpen(false)} />
             </SheetContent>
           </Sheet>
