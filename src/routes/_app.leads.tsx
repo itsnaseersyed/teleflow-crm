@@ -154,14 +154,48 @@ function LeadsPage() {
     initialPageParam: undefined as any,
     enabled: viewMode === 'leads',
     queryFn: async ({ pageParam }) => {
-      let q = query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(PAGE_SIZE));
-      if (selectedBatchId) q = query(q, where("uploadBatchId", "==", selectedBatchId));
-      if (statusFilter !== "all") q = query(q, where("leadStatus", "==", statusFilter));
-      if (telecallerFilter !== "all") q = query(q, where("assignedTo", "==", telecallerFilter));
+      // 1. Build the base query
+      let q = query(collection(db, "leads"), limit(PAGE_SIZE));
+
+      // 2. Apply Filters
+      if (selectedBatchId) {
+        q = query(q, where("uploadBatchId", "==", selectedBatchId));
+      }
+      
+      if (statusFilter !== "all") {
+        q = query(q, where("leadStatus", "==", statusFilter));
+      }
+      
+      if (telecallerFilter !== "all") {
+        q = query(q, where("assignedTo", "==", telecallerFilter));
+      }
+
+      // 3. Apply Order (Only use createdAt if no complex filters are present to avoid index requirement)
+      // If we have selectedBatchId or statusFilter, we'll sort locally to avoid composite index errors
+      if (!selectedBatchId && statusFilter === "all" && telecallerFilter === "all") {
+        q = query(q, orderBy("createdAt", "desc"));
+      }
+      
       if (pageParam) q = query(q, startAfter(pageParam));
+      
       const snap = await getDocs(q);
+      let leads = snap.docs.map(d => ({ 
+        id: d.id, 
+        ...d.data(), 
+        createdAt: d.data().createdAt?.toDate?.() || new Date() 
+      })) as Lead[];
+
+      // Local sorting if we skipped it in the query
+      if (selectedBatchId || statusFilter !== "all" || telecallerFilter !== "all") {
+        leads.sort((a, b) => {
+          const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
+          const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
+          return dateB - dateA;
+        });
+      }
+
       return {
-        leads: snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.() || new Date() })) as Lead[],
+        leads,
         lastDoc: snap.docs[snap.docs.length - 1] || null,
       };
     },
@@ -377,10 +411,14 @@ function LeadsPage() {
                        </div>
                        <div>
                          <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{batchName}</h3>
-                         <div className="flex items-center gap-3 mt-0.5">
-                           <p className="text-[10px] text-slate-500 font-medium">{batch.fileName}</p>
-                           <span className="text-[10px] text-slate-300">•</span>
-                           <p className="text-[10px] text-blue-600 font-bold">{batch.importedRows} Contacts</p>
+                         <div className="flex items-center gap-2 mt-1 flex-wrap">
+                           <p className="text-[10px] text-slate-400 font-medium truncate max-w-[120px]">{batch.fileName}</p>
+                           <span className="text-[10px] text-slate-200">•</span>
+                           <p className="text-[10px] text-slate-600 font-bold">{batch.importedRows} Total</p>
+                           <span className="text-[10px] text-slate-200">•</span>
+                           <p className="text-[10px] text-green-600 font-bold">{(batch as any).assignedLeadsCount || 0} Assigned</p>
+                           <span className="text-[10px] text-slate-200">•</span>
+                           <p className="text-[10px] text-orange-500 font-bold">{(batch.importedRows || 0) - ((batch as any).assignedLeadsCount || 0)} Pending</p>
                          </div>
                        </div>
                      </div>
