@@ -49,6 +49,11 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/lead/$leadId/call")({
   component: CallPage,
+  validateSearch: (search: Record<string, unknown>) => {
+    return {
+      from: (search.from as string) || undefined,
+    };
+  },
 });
 
 const CALL_STATUSES = [
@@ -105,7 +110,7 @@ function CallPage() {
         ...d,
         createdAt: d.createdAt?.toDate?.() || new Date(),
         lastCalledAt: d.lastCalledAt?.toDate?.() || undefined,
-      } as Lead;
+      } as unknown as Lead;
     },
   });
 
@@ -202,17 +207,28 @@ function CallPage() {
       return true;
     },
     onSuccess: async () => {
+      const { from } = Route.useSearch();
       toast.success("Call saved successfully!");
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
       qc.invalidateQueries({ queryKey: ["followups"] });
       qc.invalidateQueries({ queryKey: ["lead", leadId] });
 
+      // If we came from any page other than 'my-leads', go back to that page
+      if (from && from !== "my-leads") {
+        setTimeout(() => {
+          navigate({ to: `/${from}` as any });
+        }, 500);
+        return;
+      }
+
+      // Default behavior for 'my-leads': move to next lead
       if (hasNext) {
         setTimeout(() => {
           navigate({
             to: "/lead/$leadId/call",
             params: { leadId: allLeads[currentIndex + 1].id },
+            search: { from: "my-leads" }
           });
         }, 500);
       } else {
@@ -245,11 +261,13 @@ function CallPage() {
   };
 
   const handleNavigation = (direction: "prev" | "next") => {
+    const { from } = Route.useSearch();
     const newIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
     if (newIndex >= 0 && newIndex < allLeads.length) {
       navigate({
         to: "/lead/$leadId/call",
         params: { leadId: allLeads[newIndex].id },
+        search: { from },
       });
     }
   };

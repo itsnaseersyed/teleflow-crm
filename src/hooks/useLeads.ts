@@ -1,16 +1,17 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { leadService } from "@/services/leadService";
+import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 
 export function useLeadsPaginated(filters: { status?: string; assignedTo?: string }) {
   return useInfiniteQuery({
     queryKey: ["leads", filters],
-    queryFn: ({ pageParam = null }) => 
+    queryFn: ({ pageParam }) => 
       leadService.getLeadsPaginated({ 
-        lastDoc: pageParam, 
+        lastDoc: pageParam as QueryDocumentSnapshot<DocumentData> | null, 
         status: filters.status,
         assignedTo: filters.assignedTo
       }),
-    initialPageParam: null,
+    initialPageParam: null as QueryDocumentSnapshot<DocumentData> | null,
     getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.lastDoc : undefined,
     staleTime: 1000 * 60 * 5,
   });

@@ -120,6 +120,7 @@ function MyLeadsPage() {
     navigate({
       to: "/lead/$leadId/call",
       params: { leadId },
+      search: { from: "my-leads" }
     });
   };
 
@@ -133,65 +134,7 @@ function MyLeadsPage() {
         </p>
       </div>
 
-      {/* Statistics */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1 uppercase">Total</p>
-              <p className="text-3xl font-bold">{stats?.totalLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-blue-200 bg-blue-50">
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-blue-600 mb-1 uppercase font-semibold">Pending</p>
-              <p className="text-3xl font-bold text-blue-700">{stats?.assignedLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-amber-200 bg-amber-50">
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-amber-600 mb-1 uppercase font-semibold">In Progress</p>
-              <p className="text-3xl font-bold text-amber-700">{stats?.inProgressLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-orange-200 bg-orange-50">
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-orange-600 mb-1 uppercase font-semibold">Follow-Up</p>
-              <p className="text-3xl font-bold text-orange-700">{stats?.followUpLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-red-600 mb-1 uppercase font-semibold">Not Interested</p>
-              <p className="text-3xl font-bold text-red-700">{stats?.notInterestedLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-green-600 mb-1 uppercase font-semibold">Completed</p>
-              <p className="text-3xl font-bold text-green-700">{stats?.completedLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-purple-200 bg-purple-50">
-          <CardContent className="pt-6">
-            <div>
-              <p className="text-xs text-purple-600 mb-1 uppercase font-semibold">Converted ⭐</p>
-              <p className="text-3xl font-bold text-purple-700">{stats?.convertedLeads ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+
 
       {/* Main Content */}
       <Card>

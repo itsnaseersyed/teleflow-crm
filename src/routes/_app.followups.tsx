@@ -238,7 +238,7 @@ function FollowupsPage() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8 text-orange-600 hover:bg-orange-50"
-                      onClick={() => navigate({ to: "/lead/$leadId/call", params: { leadId: f.leadId! }})}
+                      onClick={() => navigate({ to: "/lead/$leadId/call", params: { leadId: f.leadId! }, search: { from: "followups" }})}
                       title="Log Call"
                     >
                       <Pencil className="h-4 w-4" />

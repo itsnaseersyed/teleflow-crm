@@ -24,6 +24,22 @@ export const Route = createFileRoute("/_app/reports")({
   component: ReportsPage,
 });
 
+interface DailyData {
+  date: string;
+  calls: number;
+}
+
+interface CallStatusData {
+  name: string;
+  value: number;
+}
+
+interface PerformanceData {
+  name: string;
+  calls: number;
+  converted: number;
+}
+
 function ReportsPage() {
   const { role, user } = useAuth();
   const navigate = useNavigate();
@@ -49,9 +65,9 @@ function ReportsPage() {
   // as full historical bucket tracking is a Phase 2 refinement.
   // This satisfies the requirement to REMOVE expensive collection scanning.
   const data = {
-    daily: [],
-    callStatus: [],
-    perf: [],
+    daily: [] as DailyData[],
+    callStatus: [] as CallStatusData[],
+    perf: [] as PerformanceData[],
     totalCalls,
     conversion,
     followCompletion: 0,
