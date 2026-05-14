@@ -115,15 +115,20 @@ function UsersPage() {
       if (!archSnap.exists()) throw new Error("Archived record not found");
 
       const data = archSnap.data();
-      // Move back to active users
-      await setDoc(doc(db, "users", uid), {
+      
+      // Move back to active users (Create new document)
+      const newUserDoc = {
         ...data,
         isActive: true,
         restoredAt: serverTimestamp(),
-        // clean up archive fields
-        archivedAt: null,
-        archiveStatus: null
-      });
+        updatedAt: serverTimestamp(),
+      };
+      
+      // Remove archive-specific fields before moving back
+      delete (newUserDoc as any).archivedAt;
+      delete (newUserDoc as any).archiveStatus;
+
+      await setDoc(doc(db, "users", uid), newUserDoc);
 
       // Delete from archive
       await deleteDoc(archRef);

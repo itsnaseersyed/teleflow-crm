@@ -5,13 +5,20 @@ service cloud.firestore {
     // 1. ADMIN CHECK
     function isAdmin() {
       return request.auth != null && 
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin');
     }
 
     // 2. USERS COLLECTION
     match /users/{uid} {
-      allow read: if true; // Public for login verification
-      allow write: if isAdmin() || request.auth == null; // Initial setup
+      allow read: if true; 
+      allow create: if request.auth == null || isAdmin(); 
+      allow update: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow delete: if isAdmin();
+    }
+
+    match /archived_users/{uid} {
+      allow read, write: if isAdmin();
     }
 
     // 3. LEADS COLLECTION
