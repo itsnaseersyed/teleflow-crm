@@ -19,8 +19,6 @@ export const CALL_STATUSES = [
   "Invalid Number",
 ] as const;
 
-export const PRIORITIES = ["Low", "Medium", "High"] as const;
-
 export function statusBadgeClass(status: string) {
   switch (status) {
     case "Converted":
@@ -46,13 +44,3 @@ export function statusBadgeClass(status: string) {
   }
 }
 
-export function priorityBadgeClass(p: string) {
-  switch (p) {
-    case "High":
-      return "bg-destructive/10 text-destructive border-destructive/30";
-    case "Medium":
-      return "bg-warning/15 text-warning-foreground border-warning/30";
-    default:
-      return "bg-muted text-muted-foreground border-border";
-  }
-}

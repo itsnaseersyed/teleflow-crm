@@ -1,9 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { collection, query, orderBy, getDocs, updateDoc, doc, where } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
-import { CalendarClock, Check, Clock, AlertCircle } from "lucide-react";
+import { CalendarClock, Check, Clock, AlertCircle, Phone, MessageCircle, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -26,11 +26,13 @@ type Followup = {
 
 function FollowupsPage() {
   const { role, user } = useAuth();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [tab, setTab] = useState<"today" | "upcoming" | "overdue" | "completed">("today");
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["followups", role, user?.uid],
+    enabled: !!user && !!role,
     queryFn: async () => {
       // Build base query — telecallers only see their own, admins see all
       let q;
@@ -201,18 +203,51 @@ function FollowupsPage() {
                 <div className="text-xs text-muted-foreground mt-1 truncate">"{f.notes}"</div>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               {f.mobileNumber && (
-                <a href={`tel:${f.mobileNumber}`}>
-                  <Button size="sm" variant="outline">
-                    Call
-                  </Button>
-                </a>
+                <>
+                  <a
+                    href={`tel:${f.mobileNumber}`}
+                    onClick={(e) => e.stopPropagation()}
+                    title="Call"
+                  >
+                    <Button size="icon" variant="ghost">
+                      <Phone className="h-4 w-4" />
+                    </Button>
+                  </a>
+                  <a
+                    href={`https://wa.me/${f.mobileNumber.replace(/\D/g, "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title="WhatsApp"
+                  >
+                    <Button size="icon" variant="ghost">
+                      <MessageCircle className="h-4 w-4 text-success" />
+                    </Button>
+                  </a>
+                </>
+              )}
+              {f.leadId && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate({
+                      to: "/lead/$leadId/call",
+                      params: { leadId: f.leadId! },
+                    });
+                  }}
+                  title="Log Call / Reschedule"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
               )}
               {f.status === "Pending" && (
                 <Button
                   size="sm"
-                  className="bg-success text-success-foreground hover:opacity-95"
+                  className="bg-success text-success-foreground hover:opacity-95 h-8 px-3 ml-2 font-medium"
                   onClick={() => complete.mutate(f.id)}
                   disabled={complete.isPending}
                 >

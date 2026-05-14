@@ -50,16 +50,12 @@ import {
   AlertCircle,
   Loader2,
   ArrowUp,
+  MessageCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/lead/$leadId/call")({
   component: CallPage,
-  params: {
-    validate: (params) => ({
-      leadId: params.leadId,
-    }),
-  },
 });
 
 const CALL_STATUSES = [
@@ -78,9 +74,6 @@ interface Lead {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedService?: string;
-  priority?: string;
-  remarks?: string;
   leadStatus: string;
   lastCallStatus?: string;
   lastCalledAt?: Date;
@@ -108,11 +101,6 @@ function CallPage() {
   const [callStartTime, setCallStartTime] = useState<number | null>(null);
   const [callDuration, setCallDuration] = useState(0);
   const [isCallActive, setIsCallActive] = useState(false);
-  
-  // Escalation state
-  const [showEscalationDialog, setShowEscalationDialog] = useState(false);
-  const [selectedSenior, setSelectedSenior] = useState("");
-  const [escalationNotes, setEscalationNotes] = useState("");
   
 
 
@@ -158,15 +146,7 @@ function CallPage() {
     },
   });
 
-  // Fetch all telecallers for escalation
-  const { data: telecallers = [] } = useQuery({
-    queryKey: ["telecallers"],
-    queryFn: async () => {
-      const q = query(collection(db, "users"), where("role", "==", "telecaller"));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, fullName: d.data().fullName }));
-    },
-  });
+
 
   // Calculate current position in queue
   const currentIndex = allLeads.findIndex((l) => l.id === leadId);
@@ -186,7 +166,6 @@ function CallPage() {
         customerName: currentLead.customerName,
         mobileNumber: currentLead.mobileNumber,
         city: currentLead.city || null,
-        interestedService: currentLead.interestedService || null,
         callStatus: data.callStatus,
         feedbackNotes: data.feedbackNotes,
         followUpDate: data.followUpDate || null,
@@ -196,13 +175,15 @@ function CallPage() {
 
       // Update lead status
       const leadUpdateStatus =
-        data.callStatus === "Converted"
-          ? "Completed"
-          : data.callStatus === "Follow-Up Needed"
-            ? "Follow-Up"
-            : data.callStatus === "Not Interested"
-              ? "Not Interested"
-              : "In Progress";
+        data.callStatus === "Interested"
+          ? "Interested"
+          : data.callStatus === "Converted"
+            ? "Completed"
+            : data.callStatus === "Follow-Up Needed"
+              ? "Follow-Up"
+              : data.callStatus === "Not Interested"
+                ? "Not Interested"
+                : "In Progress";
 
       await updateDoc(doc(db, "leads", currentLead.id), {
         lastCallStatus: data.callStatus,
@@ -228,6 +209,11 @@ function CallPage() {
     onSuccess: async () => {
       toast.success("Call saved successfully!");
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
+      qc.invalidateQueries({ queryKey: ["user-leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["followups"] });
       qc.invalidateQueries({ queryKey: ["lead", leadId] });
 
 
@@ -251,65 +237,6 @@ function CallPage() {
     },
   });
 
-  // Handle escalation to senior
-  const escalateMutation = useMutation({
-    mutationFn: async () => {
-      if (!user || !currentLead || !selectedSenior) throw new Error("Missing escalation data");
-
-      // Create call record first
-      await addDoc(collection(db, "calls"), {
-        leadId: currentLead.id,
-        telecallerId: user.uid,
-        customerName: currentLead.customerName,
-        mobileNumber: currentLead.mobileNumber,
-        city: currentLead.city || null,
-        interestedService: currentLead.interestedService || null,
-        callStatus: "Interested",
-        feedbackNotes: escalationNotes,
-        callDuration: callDuration,
-        createdAt: serverTimestamp(),
-      });
-
-      // Update lead with escalation info
-      await updateDoc(doc(db, "leads", currentLead.id), {
-        sourcedBy: user.uid, // Mark junior who sourced it
-        handledBy: selectedSenior, // Mark senior who will close it
-        escalationStatus: "pending_senior",
-        escalatedAt: serverTimestamp(),
-        escalationNotes: escalationNotes,
-        assignedTo: selectedSenior, // Assign to senior
-        lastCallStatus: "Interested",
-        lastCalledAt: serverTimestamp(),
-        leadStatus: "In Progress",
-        feedbackNotes: escalationNotes,
-      });
-
-      return true;
-    },
-    onSuccess: async () => {
-      toast.success("Lead escalated to senior telecaller!");
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["user-leads"] });
-
-
-
-      setShowEscalationDialog(false);
-      setTimeout(() => {
-        if (hasNext) {
-          navigate({
-            to: "/lead/$leadId/call",
-            params: { leadId: allLeads[currentIndex + 1].id },
-          });
-        } else {
-          navigate({ to: "/my-leads" });
-        }
-      }, 500);
-    },
-    onError: (err: any) => {
-      toast.error(`Escalation failed: ${err.message}`);
-    },
-  });
-
   const handleSaveCall = () => {
     if (!callStatus) {
       toast.error("Please select a call status");
@@ -324,45 +251,19 @@ function CallPage() {
     });
   };
 
-  const handleCallStart = () => {
-    // In a real app, this would integrate with a VoIP service
-    setIsCallActive(true);
-    setCallStartTime(Date.now());
-    toast.success(`Calling ${currentLead?.customerName}...`);
-
-    // Simulate call timer
-    const interval = setInterval(() => {
-      setCallDuration((prev) => prev + 1);
-    }, 1000);
-
-    return () => clearInterval(interval);
-  };
-
-  const handleCallEnd = () => {
-    setIsCallActive(false);
-    setCallStartTime(null);
-  };
-
   const handleNavigation = (direction: "prev" | "next") => {
     const newIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
     if (newIndex >= 0 && newIndex < allLeads.length) {
       navigate({
-        to: "/app/lead/$leadId/call",
+        to: "/lead/$leadId/call",
         params: { leadId: allLeads[newIndex].id },
       });
-      // Reset form
       setCallStatus("");
       setFeedbackNotes("");
       setFollowUpDate("");
       setCallDuration(0);
       setIsCallActive(false);
     }
-  };
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   if (leadLoading) {
@@ -384,9 +285,6 @@ function CallPage() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-
-
-      {/* Header with Navigation */}
       <div className="flex items-center justify-between">
         <Button
           variant="outline"
@@ -426,9 +324,7 @@ function CallPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Lead Details */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Customer Card */}
           <Card className="border-2">
             <CardHeader>
               <div className="flex items-start justify-between mb-2">
@@ -436,24 +332,39 @@ function CallPage() {
                   <CardTitle className="text-2xl">{currentLead.customerName}</CardTitle>
                   <CardDescription>{currentLead.mobileNumber}</CardDescription>
                 </div>
-                {currentLead.priority && (
-                  <span
-                    className={`text-xs font-bold px-3 py-1 rounded ${
-                      currentLead.priority === "High"
-                        ? "bg-red-100 text-red-700"
-                        : currentLead.priority === "Low"
-                          ? "bg-blue-100 text-blue-700"
-                          : "bg-yellow-100 text-yellow-700"
-                    }`}
-                  >
-                    {currentLead.priority} Priority
-                  </span>
-                )}
               </div>
             </CardHeader>
 
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="flex gap-3 mb-4">
+                <a
+                  href={`tel:${currentLead.mobileNumber}`}
+                  className="flex-1"
+                >
+                  <Button
+                    className="w-full bg-gradient-accent text-white gap-2 font-semibold"
+                  >
+                    <Phone className="h-4 w-4" />
+                    Dial Number
+                  </Button>
+                </a>
+                <a
+                  href={`https://wa.me/${currentLead.mobileNumber.replace(/\D/g, "")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex-1"
+                >
+                  <Button
+                    variant="outline"
+                    className="w-full border-success text-success hover:bg-success/10 gap-2 font-semibold"
+                  >
+                    <MessageCircle className="h-4 w-4 text-success" />
+                    WhatsApp
+                  </Button>
+                </a>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
                 {currentLead.city && (
                   <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
                     <MapPin className="h-4 w-4 text-muted-foreground" />
@@ -463,26 +374,9 @@ function CallPage() {
                     </div>
                   </div>
                 )}
-                {currentLead.interestedService && (
-                  <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
-                    <Target className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">Service</p>
-                      <p className="font-medium">{currentLead.interestedService}</p>
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {currentLead.remarks && (
-                <Alert>
-                  <FileText className="h-4 w-4" />
-                  <AlertDescription>
-                    <p className="text-xs text-muted-foreground mb-1">Additional Notes</p>
-                    <p className="text-sm">{currentLead.remarks}</p>
-                  </AlertDescription>
-                </Alert>
-              )}
+
 
               {currentLead.lastCallStatus && (
                 <Alert className="bg-blue-50 border-blue-200">
@@ -501,7 +395,6 @@ function CallPage() {
             </CardContent>
           </Card>
 
-          {/* Call Form */}
           <Card>
             <CardHeader>
               <CardTitle>Call Details</CardTitle>
@@ -509,39 +402,6 @@ function CallPage() {
             </CardHeader>
 
             <CardContent className="space-y-6">
-              {/* Call Timer & Action */}
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  {isCallActive ? (
-                    <div className="rounded-lg border-2 border-green-500 bg-green-50 p-6 flex flex-col items-center justify-center gap-4">
-                      <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse" />
-                        <p className="font-semibold text-green-700">Call Active</p>
-                      </div>
-                      <p className="text-3xl font-bold text-green-700">
-                        {formatDuration(callDuration)}
-                      </p>
-                      <Button
-                        variant="destructive"
-                        onClick={handleCallEnd}
-                        className="w-full"
-                      >
-                        End Call
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      onClick={handleCallStart}
-                      className="w-full bg-gradient-accent text-white h-20 text-lg font-semibold gap-2"
-                    >
-                      <Phone className="h-5 w-5" />
-                      Call Now
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Call Status */}
               <div className="space-y-2">
                 <Label htmlFor="call-status" className="flex items-center gap-2">
                   <Zap className="h-4 w-4" />
@@ -564,7 +424,6 @@ function CallPage() {
                 </Select>
               </div>
 
-              {/* Feedback Notes */}
               <div className="space-y-2">
                 <Label htmlFor="notes" className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
@@ -580,7 +439,6 @@ function CallPage() {
                 />
               </div>
 
-              {/* Follow-up Date */}
               <div className="space-y-2">
                 <Label htmlFor="follow-up" className="flex items-center gap-2">
                   <Calendar className="h-4 w-4" />
@@ -594,28 +452,14 @@ function CallPage() {
                 />
               </div>
 
-              {/* Action Buttons */}
               <div className="flex gap-3 pt-4 flex-wrap">
                 <Button
                   variant="outline"
                   onClick={() => navigate({ to: "/my-leads" })}
-                  disabled={saveMutation.isPending || escalateMutation.isPending}
+                  disabled={saveMutation.isPending}
                 >
                   Cancel
                 </Button>
-                
-                {/* Escalate to Senior Button - Only show when Interested */}
-                {callStatus === "Interested" && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => setShowEscalationDialog(true)}
-                    disabled={escalateMutation.isPending || saveMutation.isPending}
-                    className="gap-2"
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                    Escalate to Senior
-                  </Button>
-                )}
                 
                 <Button
                   onClick={handleSaveCall}
@@ -639,9 +483,7 @@ function CallPage() {
           </Card>
         </div>
 
-        {/* Right: Queue Information */}
         <div className="space-y-4">
-          {/* Progress */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Queue Progress</CardTitle>
@@ -668,7 +510,6 @@ function CallPage() {
             </CardContent>
           </Card>
 
-          {/* Upcoming Leads */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Upcoming Leads</CardTitle>
@@ -696,79 +537,6 @@ function CallPage() {
           </Card>
         </div>
       </div>
-
-      {/* Escalation Dialog */}
-      <Dialog open={showEscalationDialog} onOpenChange={setShowEscalationDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Escalate to Senior Telecaller</DialogTitle>
-            <DialogDescription>
-              Send this lead to a senior telecaller for closing. They will be able to see all your notes.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {/* Select Senior */}
-            <div className="space-y-2">
-              <Label htmlFor="senior-select">Select Senior Telecaller *</Label>
-              <Select value={selectedSenior} onValueChange={setSelectedSenior}>
-                <SelectTrigger id="senior-select">
-                  <SelectValue placeholder="Choose a senior..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {telecallers
-                    .filter((tc) => tc.id !== user?.uid) // Don't show self
-                    .map((tc) => (
-                      <SelectItem key={tc.id} value={tc.id}>
-                        {tc.fullName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Escalation Notes */}
-            <div className="space-y-2">
-              <Label htmlFor="esc-notes">Notes for Senior (Optional)</Label>
-              <Textarea
-                id="esc-notes"
-                placeholder="Add any notes or context for the senior telecaller..."
-                value={escalationNotes}
-                onChange={(e) => setEscalationNotes(e.target.value)}
-                rows={4}
-                className="resize-none"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowEscalationDialog(false)}
-              disabled={escalateMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => escalateMutation.mutate()}
-              disabled={!selectedSenior || escalateMutation.isPending}
-              className="bg-gradient-accent text-white gap-2"
-            >
-              {escalateMutation.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Escalating...
-                </>
-              ) : (
-                <>
-                  <ArrowUp className="h-4 w-4" />
-                  Escalate Lead
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

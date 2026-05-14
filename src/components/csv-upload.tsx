@@ -172,8 +172,6 @@ export function CSVPreview({
               <th className="px-3 py-2 text-left font-medium text-xs">Name</th>
               <th className="px-3 py-2 text-left font-medium text-xs">Phone</th>
               <th className="px-3 py-2 text-left font-medium text-xs">City</th>
-              <th className="px-3 py-2 text-left font-medium text-xs">Service</th>
-              <th className="px-3 py-2 text-left font-medium text-xs">Priority</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -183,8 +181,6 @@ export function CSVPreview({
                 <td className="px-3 py-2 text-xs">{lead.customerName}</td>
                 <td className="px-3 py-2 text-xs">{lead.mobileNumber}</td>
                 <td className="px-3 py-2 text-xs">{lead.city || "-"}</td>
-                <td className="px-3 py-2 text-xs">{lead.interestedService || "-"}</td>
-                <td className="px-3 py-2 text-xs">{lead.priority || "Medium"}</td>
               </tr>
             ))}
           </tbody>

@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -27,6 +28,13 @@ export const Route = createFileRoute("/_app/reports")({
 
 function ReportsPage() {
   const { role, user } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (role && role !== "admin") {
+      navigate({ to: "/my-leads" });
+    }
+  }, [role, navigate]);
 
   const { data } = useQuery({
     queryKey: ["reports", role, user?.uid],

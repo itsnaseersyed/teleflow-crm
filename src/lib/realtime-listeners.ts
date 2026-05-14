@@ -164,8 +164,14 @@ export function useImportBatchUpdates(userId: string | undefined) {
           const data = snapshot.docs.map((doc) => ({
             id: doc.id,
             ...doc.data(),
-          }));
-          setBatches(data.sort((a, b) => b.uploadedAt - a.uploadedAt));
+          })) as any[];
+          setBatches(
+            data.sort((a, b) => {
+              const aTime = a.uploadedAt?.toDate?.()?.getTime() || 0;
+              const bTime = b.uploadedAt?.toDate?.()?.getTime() || 0;
+              return bTime - aTime;
+            })
+          );
           setIsLoading(false);
         },
         () => {

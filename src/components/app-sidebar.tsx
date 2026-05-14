@@ -11,15 +11,14 @@ import {
   Headphones,
   FileUp,
   Send,
+  CheckCircle2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 const baseNav = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/followups", label: "Follow-Ups", icon: CalendarClock },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
 ] as const;
 
 const telecallerNav = [
@@ -27,6 +26,9 @@ const telecallerNav = [
 ] as const;
 
 const adminNav = [
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/reports", label: "Reports", icon: BarChart3 },
+  { to: "/interested-leads", label: "Interested Leads", icon: CheckCircle2 },
   { to: "/leads", label: "All Leads", icon: Users },
   { to: "/import-leads", label: "Import Leads", icon: FileUp },
   { to: "/lead-assignment", label: "Lead Assignment", icon: Send },
@@ -59,7 +61,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
         {items.map((item) => {
           const active = 
             path === item.to || 
-            (item.to !== "/app/dashboard" && path.startsWith(item.to));
+            (item.to !== "/dashboard" && path.startsWith(item.to));
           const Icon = item.icon;
           return (
             <Link

@@ -36,6 +36,8 @@ import {
   Loader2,
   MapPin,
   Target,
+  MessageCircle,
+  Pencil,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -48,9 +50,7 @@ interface Lead {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedService?: string;
-  priority?: string;
-  leadStatus: "Assigned" | "In Progress" | "Completed";
+  leadStatus: "Assigned" | "In Progress" | "Completed" | "Follow-Up" | "Not Interested";
   assignedTo: string;
   lastCallStatus?: string;
   lastCalledAt?: Date;
@@ -103,7 +103,24 @@ function MyLeadsPage() {
 
   const leads = useMemo(() => {
     return assignedLeads
-      .filter((lead) => lead.leadStatus === filterStatus)
+      .filter((lead) => {
+        if (filterStatus === "Assigned") {
+          return lead.leadStatus === "Assigned";
+        }
+        if (filterStatus === "In Progress") {
+          return lead.leadStatus === "In Progress";
+        }
+        if (filterStatus === "Follow-Up") {
+          return lead.leadStatus === "Follow-Up";
+        }
+        if (filterStatus === "Not Interested") {
+          return lead.leadStatus === "Not Interested";
+        }
+        if (filterStatus === "Completed") {
+          return lead.leadStatus === "Completed";
+        }
+        return lead.leadStatus === filterStatus;
+      })
       .filter((lead) => lead.escalationStatus !== "pending_senior")
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }, [assignedLeads, filterStatus]);
@@ -151,6 +168,8 @@ function MyLeadsPage() {
     total: assignedLeads.filter(notPendingEscalation).length,
     pending: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Assigned").length,
     inProgress: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "In Progress").length,
+    followUp: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Follow-Up").length,
+    notInterested: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Not Interested").length,
     completed: assignedLeads.filter((l) => notPendingEscalation(l) && l.leadStatus === "Completed").length,
     converted: convertedLeads.length,
   };
@@ -173,7 +192,7 @@ function MyLeadsPage() {
       </div>
 
       {/* Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div>
@@ -195,6 +214,22 @@ function MyLeadsPage() {
             <div>
               <p className="text-xs text-amber-600 mb-1 uppercase font-semibold">In Progress</p>
               <p className="text-3xl font-bold text-amber-700">{stats.inProgress}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-orange-200 bg-orange-50">
+          <CardContent className="pt-6">
+            <div>
+              <p className="text-xs text-orange-600 mb-1 uppercase font-semibold">Follow-Up</p>
+              <p className="text-3xl font-bold text-orange-700">{stats.followUp}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="pt-6">
+            <div>
+              <p className="text-xs text-red-600 mb-1 uppercase font-semibold">Not Interested</p>
+              <p className="text-3xl font-bold text-red-700">{stats.notInterested}</p>
             </div>
           </CardContent>
         </Card>
@@ -240,6 +275,8 @@ function MyLeadsPage() {
                 <SelectContent>
                   <SelectItem value="Assigned">Pending</SelectItem>
                   <SelectItem value="In Progress">In Progress</SelectItem>
+                  <SelectItem value="Follow-Up">Follow-Up</SelectItem>
+                  <SelectItem value="Not Interested">Not Interested</SelectItem>
                   <SelectItem value="Completed">Completed</SelectItem>
                 </SelectContent>
               </Select>
@@ -296,19 +333,6 @@ function MyLeadsPage() {
                         <h3 className="font-semibold text-base truncate">
                           {lead.customerName}
                         </h3>
-                        {lead.priority && (
-                          <span
-                            className={`text-xs font-semibold px-2 py-1 rounded ${
-                              lead.priority === "High"
-                                ? "bg-red-100 text-red-700"
-                                : lead.priority === "Low"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : "bg-yellow-100 text-yellow-700"
-                            }`}
-                          >
-                            {lead.priority}
-                          </span>
-                        )}
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -322,12 +346,7 @@ function MyLeadsPage() {
                             <span>{lead.city}</span>
                           </div>
                         )}
-                        {lead.interestedService && (
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Target className="h-4 w-4" />
-                            <span>{lead.interestedService}</span>
-                          </div>
-                        )}
+
                         {lead.lastCalledAt && (
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Clock className="h-4 w-4" />
@@ -354,36 +373,44 @@ function MyLeadsPage() {
                           <p className="text-xs text-muted-foreground">
                             {lead.leadStatus === "Assigned" && "Ready to call"}
                             {lead.leadStatus === "In Progress" && "In Progress"}
+                            {lead.leadStatus === "Follow-Up" && "Follow-Up"}
+                            {lead.leadStatus === "Not Interested" && "Not Interested"}
                             {lead.leadStatus === "Completed" && "Completed"}
                           </p>
                         </div>
-                        <Button
-                          size="sm"
-                          className="bg-gradient-accent text-white"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartCall(lead.id);
-                          }}
-                        >
-                          {lead.leadStatus === "Assigned" && (
-                            <>
-                              <Phone className="h-4 w-4 mr-1" />
-                              Call Now
-                            </>
-                          )}
-                          {lead.leadStatus === "In Progress" && (
-                            <>
-                              <ChevronRight className="h-4 w-4 mr-1" />
-                              Continue
-                            </>
-                          )}
-                          {lead.leadStatus === "Completed" && (
-                            <>
-                              <CheckCircle2 className="h-4 w-4 mr-1" />
-                              View
-                            </>
-                          )}
-                        </Button>
+                        <div className="flex items-center gap-1 justify-end">
+                          <a
+                            href={`tel:${lead.mobileNumber}`}
+                            onClick={(e) => e.stopPropagation()}
+                            title="Call"
+                          >
+                            <Button size="icon" variant="ghost">
+                              <Phone className="h-4 w-4" />
+                            </Button>
+                          </a>
+                          <a
+                            href={`https://wa.me/${lead.mobileNumber.replace(/\D/g, "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            title="WhatsApp"
+                          >
+                            <Button size="icon" variant="ghost">
+                              <MessageCircle className="h-4 w-4 text-success" />
+                            </Button>
+                          </a>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartCall(lead.id);
+                            }}
+                            title="Log Call / Feedback"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -436,12 +463,7 @@ function MyLeadsPage() {
                             <span>{lead.city}</span>
                           </div>
                         )}
-                        {lead.interestedService && (
-                          <div className="flex items-center gap-1">
-                            <Target className="h-3 w-3" />
-                            <span>{lead.interestedService}</span>
-                          </div>
-                        )}
+
                         <div className="text-xs text-purple-600 font-semibold">
                           Closed by: {lead.handledBy ? "Senior" : "---"}
                         </div>

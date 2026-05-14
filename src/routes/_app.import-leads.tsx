@@ -345,8 +345,7 @@ function ImportLeadsPage() {
                 <Alert>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription className="text-sm">
-                    CSV must contain columns: customer_name, mobile_number. Optional: city,
-                    interested_service, priority, remarks
+                    CSV must contain columns: customer_name, mobile_number. Optional: city
                   </AlertDescription>
                 </Alert>
               </CardContent>
@@ -492,9 +491,6 @@ function ImportLeadsPage() {
                 <p className="font-semibold text-xs text-muted-foreground mb-2">Optional Fields:</p>
                 <ul className="space-y-1 text-xs">
                   <li>• <code className="bg-muted px-1 rounded">city</code></li>
-                  <li>• <code className="bg-muted px-1 rounded">interested_service</code></li>
-                  <li>• <code className="bg-muted px-1 rounded">priority</code> (High/Medium/Low)</li>
-                  <li>• <code className="bg-muted px-1 rounded">remarks</code></li>
                 </ul>
               </div>
             </CardContent>

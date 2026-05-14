@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   collection,
   addDoc,
@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CALL_STATUSES, PRIORITIES } from "@/lib/lead-utils";
+import { CALL_STATUSES } from "@/lib/lead-utils";
 import { Phone, MessageCircle, Save } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,10 +35,10 @@ export const Route = createFileRoute("/_app/calls/new")({
 function NewCallPage() {
   const { user } = useAuth();
   const nav = useNavigate();
+  const qc = useQueryClient();
   const [customerName, setName] = useState("");
   const [mobileNumber, setMobile] = useState("");
   const [callStatus, setCallStatus] = useState("Connected");
-  const [priority, setPriority] = useState("Medium");
   const [callNotes, setNotes] = useState("");
   const [followUpDate, setFollow] = useState("");
 
@@ -73,7 +73,6 @@ function NewCallPage() {
           leadStatus,
           feedbackNotes: callNotes || null,
           followUpDate: followUpDate || null,
-          priority,
         });
       } else {
         // Create new lead
@@ -83,7 +82,6 @@ function NewCallPage() {
           leadStatus,
           feedbackNotes: callNotes || null,
           followUpDate: followUpDate || null,
-          priority,
           assignedTo: uid,
           createdBy: uid,
           createdAt: serverTimestamp(),
@@ -111,6 +109,11 @@ function NewCallPage() {
     },
     onSuccess: () => {
       toast.success("Call logged successfully");
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["followups"] });
       nav({ to: "/leads" });
     },
     onError: (e: any) => toast.error(e.message),
@@ -165,7 +168,7 @@ function NewCallPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-1">
           <div className="space-y-2">
             <Label>Call status</Label>
             <Select value={callStatus} onValueChange={setCallStatus}>
@@ -174,21 +177,6 @@ function NewCallPage() {
               </SelectTrigger>
               <SelectContent>
                 {CALL_STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Priority</Label>
-            <Select value={priority} onValueChange={setPriority}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORITIES.map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
                   </SelectItem>

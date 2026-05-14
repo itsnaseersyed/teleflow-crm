@@ -20,9 +20,6 @@ export interface Lead {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedService?: string;
-  priority?: "High" | "Medium" | "Low";
-  remarks?: string;
   leadStatus: "Unassigned" | "Assigned" | "In Progress" | "Completed" | "Follow-Up" | "Converted" | "Not Interested";
   assignedTo?: string; // uid of telecaller
   assignedAt?: Date;
@@ -94,7 +91,6 @@ export interface Call {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedService?: string;
   callStatus: string;
   feedbackNotes?: string;
   followUpDate?: Date | string;

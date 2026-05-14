@@ -33,7 +33,7 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { LEAD_STATUSES, PRIORITIES, statusBadgeClass, priorityBadgeClass } from "@/lib/lead-utils";
+import { LEAD_STATUSES, statusBadgeClass } from "@/lib/lead-utils";
 import { Plus, Search, Phone, MessageCircle, Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -48,12 +48,10 @@ type Lead = {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedCourse?: string;
   leadStatus: string;
   feedbackNotes?: string;
   followUpDate?: string;
   assignedTo?: string;
-  priority: string;
   createdAt: Date;
   createdBy: string;
   uploadBatchId?: string;
@@ -163,6 +161,10 @@ function LeadsPage() {
     onSuccess: () => {
       toast.success(editing ? "Lead updated" : "Lead added");
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["followups"] });
       setOpen(false);
       setEditing(null);
     },
@@ -176,6 +178,10 @@ function LeadsPage() {
     onSuccess: () => {
       toast.success("Lead deleted");
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["followups"] });
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -191,6 +197,10 @@ function LeadsPage() {
     onSuccess: () => {
       toast.success(`${selected.size} lead(s) deleted`);
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["my-converted-leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["followups"] });
       setSelected(new Set());
     },
     onError: (e: any) => toast.error(e.message),
@@ -417,9 +427,7 @@ function LeadsPage() {
                         )}
                         <th className="px-4 py-3 font-medium">Customer</th>
                         <th className="px-4 py-3 font-medium hidden md:table-cell">City</th>
-                        <th className="px-4 py-3 font-medium hidden lg:table-cell">Course</th>
                         <th className="px-4 py-3 font-medium">Status</th>
-                        <th className="px-4 py-3 font-medium hidden md:table-cell">Priority</th>
                         <th className="px-4 py-3 font-medium text-right">Actions</th>
                       </tr>
                     </thead>
@@ -440,7 +448,6 @@ function LeadsPage() {
                             <div className="text-xs text-muted-foreground">{l.mobileNumber}</div>
                           </td>
                           <td className="px-4 py-3 hidden md:table-cell">{l.city || "—"}</td>
-                          <td className="px-4 py-3 hidden lg:table-cell">{l.interestedCourse || "—"}</td>
                           <td className="px-4 py-3">
                             <div className="flex flex-col gap-2">
                               {(() => {
@@ -552,9 +559,7 @@ function LeadDialog({
   const [customerName, setName] = useState(initial?.customerName ?? "");
   const [mobileNumber, setMobile] = useState(initial?.mobileNumber ?? "");
   const [city, setCity] = useState(initial?.city ?? "");
-  const [interestedCourse, setCourse] = useState(initial?.interestedCourse ?? "");
   const [leadStatus, setStatus] = useState(initial?.leadStatus ?? "New Lead");
-  const [priority, setPriority] = useState(initial?.priority ?? "Medium");
   const [feedbackNotes, setNotes] = useState(initial?.feedbackNotes ?? "");
   const [followUpDate, setFollow] = useState(initial?.followUpDate?.slice(0, 10) ?? "");
   const [assignedTo, setAssigned] = useState(initial?.assignedTo || "unassigned");
@@ -573,15 +578,12 @@ function LeadDialog({
             <Input value={mobileNumber} onChange={(e) => setMobile(e.target.value)} required />
           </Field>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <Field label="City">
             <Input value={city} onChange={(e) => setCity(e.target.value)} />
           </Field>
-          <Field label="Interested course">
-            <Input value={interestedCourse} onChange={(e) => setCourse(e.target.value)} />
-          </Field>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <Field label="Status">
             <Select value={leadStatus} onValueChange={setStatus}>
               <SelectTrigger>
@@ -589,20 +591,6 @@ function LeadDialog({
               </SelectTrigger>
               <SelectContent>
                 {LEAD_STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Priority">
-            <Select value={priority} onValueChange={setPriority}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORITIES.map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
                   </SelectItem>
@@ -648,9 +636,7 @@ function LeadDialog({
               customerName,
               mobileNumber,
               city,
-              interestedCourse,
               leadStatus,
-              priority,
               feedbackNotes,
               followUpDate: followUpDate || null,
               assignedTo: assignedTo === "unassigned" ? null : assignedTo,

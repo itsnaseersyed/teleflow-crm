@@ -11,21 +11,12 @@ export interface LeadRow {
   mobileNumber?: string;
   phone?: string;
   city?: string;
-  interested_service?: string;
-  interestedService?: string;
-  service?: string;
-  priority?: string;
-  remarks?: string;
-  notes?: string;
 }
 
 export interface ParsedLead {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedService?: string;
-  priority?: "High" | "Medium" | "Low";
-  remarks?: string;
 }
 
 export interface ParseResult {
@@ -66,27 +57,7 @@ export function normalizeMobileNumber(number: string): string {
   return number.replace(/\D/g, "");
 }
 
-/**
- * Validate priority
- */
-export function isValidPriority(
-  priority?: string,
-): priority is "High" | "Medium" | "Low" {
-  if (!priority) return false;
-  const p = priority.trim().toLowerCase();
-  return ["high", "medium", "low"].includes(p);
-}
 
-/**
- * Normalize priority to standard format
- */
-export function normalizePriority(priority?: string): "High" | "Medium" | "Low" {
-  if (!priority) return "Medium";
-  const p = priority.trim().toLowerCase();
-  if (p === "high") return "High";
-  if (p === "low") return "Low";
-  return "Medium";
-}
 
 /**
  * Parse a single lead row
@@ -98,10 +69,6 @@ export function validateLeadRow(row: LeadRow, rowNumber?: number): ValidationRes
   const mobileNumber =
     row.mobile_number || row.mobileNumber || row.phone || "";
   const city = row.city || "";
-  const interestedService =
-    row.interested_service || row.interestedService || row.service || "";
-  const priority = row.priority || "";
-  const remarks = row.remarks || row.notes || "";
 
   // Validate required fields
   const name = customerName.trim();
@@ -137,9 +104,6 @@ export function validateLeadRow(row: LeadRow, rowNumber?: number): ValidationRes
       customerName: name,
       mobileNumber: normalizeMobileNumber(mobile),
       city: city.trim() || undefined,
-      interestedService: interestedService.trim() || undefined,
-      priority: isValidPriority(priority) ? normalizePriority(priority) : undefined,
-      remarks: remarks.trim() || undefined,
     },
   };
 }
@@ -300,12 +264,12 @@ export async function processLeadFile(file: File): Promise<ParseResult> {
  * Generate sample CSV content
  */
 export function generateSampleCSV(): string {
-  return `customer_name,mobile_number,city,interested_service,priority,remarks
-Rajesh Kumar,9876543210,Mumbai,Web Development,High,Interested in React course
-Priya Singh,9765432109,Delhi,Mobile App,Medium,Follow up next week
-Amit Patel,9654321098,Bangalore,Data Science,Low,Need more info
-Sneha Desai,9543210987,Pune,Cloud Computing,High,Ready to join
-Vikram Rao,9432109876,Chennai,AI/ML,Medium,Discussing with manager`;
+  return `customer_name,mobile_number,city
+Rajesh Kumar,9876543210,Mumbai
+Priya Singh,9765432109,Delhi
+Amit Patel,9654321098,Bangalore
+Sneha Desai,9543210987,Pune
+Vikram Rao,9432109876,Chennai`;
 }
 
 /**

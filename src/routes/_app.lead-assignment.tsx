@@ -61,8 +61,6 @@ interface Lead {
   customerName: string;
   mobileNumber: string;
   city?: string;
-  interestedService?: string;
-  priority?: string;
   leadStatus: string;
   assignedTo?: string;
   assignedAt?: Date;
@@ -176,6 +174,9 @@ function LeadAssignmentPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["leads-assignment"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Lead assigned successfully");
     },
     onError: (err: any) => {
@@ -204,6 +205,9 @@ function LeadAssignmentPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["leads-assignment"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       setBulkAssignDialog(false);
       setSelectedLeads(new Set());
       setBulkAssignTo("");
@@ -326,6 +330,9 @@ function LeadAssignmentPage() {
 
       await batch.commit();
       qc.invalidateQueries({ queryKey: ["leads-assignment"] });
+      qc.invalidateQueries({ queryKey: ["my-leads"] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       setShowSmartDistribution(false);
       setSelectedTelecallersForDistribution(new Set());
       setTotalLeadsForDistribution("");
@@ -393,7 +400,7 @@ function LeadAssignmentPage() {
             </div>
           </CardContent>
         </Card>
-        <Card colSpan={2}>
+        <Card className="md:col-span-2">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">By Telecaller</CardTitle>
           </CardHeader>
@@ -622,8 +629,6 @@ function LeadAssignmentPage() {
                         <TableHead>Customer</TableHead>
                         <TableHead className="hidden md:table-cell">Phone</TableHead>
                         <TableHead className="hidden lg:table-cell">City</TableHead>
-                        <TableHead className="hidden lg:table-cell">Service</TableHead>
-                        <TableHead>Priority</TableHead>
                         <TableHead>Assigned To</TableHead>
                         <TableHead className="text-right">Action</TableHead>
                       </TableRow>
@@ -651,22 +656,8 @@ function LeadAssignmentPage() {
                           <TableCell className="hidden lg:table-cell text-sm">
                             {lead.city || "-"}
                           </TableCell>
-                          <TableCell className="hidden lg:table-cell text-sm">
-                            {lead.interestedService || "-"}
-                          </TableCell>
-                          <TableCell>
-                            <span
-                              className={`text-xs font-semibold px-2 py-1 rounded ${
-                                lead.priority === "High"
-                                  ? "bg-red-100 text-red-700"
-                                  : lead.priority === "Low"
-                                    ? "bg-blue-100 text-blue-700"
-                                    : "bg-yellow-100 text-yellow-700"
-                              }`}
-                            >
-                              {lead.priority || "Medium"}
-                            </span>
-                          </TableCell>
+
+
                           <TableCell className="text-sm">
                             {lead.assignedTo
                               ? telecallers.find((t) => t.id === lead.assignedTo)?.fullName ||

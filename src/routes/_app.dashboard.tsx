@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { collection, query, where, getDocs, orderBy, limit } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -38,10 +39,17 @@ function startOfWeekDate() {
 
 function Dashboard() {
   const { role, user, fullName } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (role && role !== "admin") {
+      navigate({ to: "/my-leads" });
+    }
+  }, [role, navigate]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard", role, user?.uid],
-    enabled: !!user,
+    enabled: !!user && !!role,
     queryFn: async () => {
       const today = startOfDayDate();
       const uid = user!.uid;

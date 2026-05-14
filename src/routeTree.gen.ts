@@ -20,6 +20,7 @@ import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppMyLeadsRouteImport } from './routes/_app.my-leads'
 import { Route as AppLeadsRouteImport } from './routes/_app.leads'
 import { Route as AppLeadAssignmentRouteImport } from './routes/_app.lead-assignment'
+import { Route as AppInterestedLeadsRouteImport } from './routes/_app.interested-leads'
 import { Route as AppImportLeadsRouteImport } from './routes/_app.import-leads'
 import { Route as AppFollowupsRouteImport } from './routes/_app.followups'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
@@ -80,6 +81,11 @@ const AppLeadAssignmentRoute = AppLeadAssignmentRouteImport.update({
   path: '/lead-assignment',
   getParentRoute: () => AppRoute,
 } as any)
+const AppInterestedLeadsRoute = AppInterestedLeadsRouteImport.update({
+  id: '/interested-leads',
+  path: '/interested-leads',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppImportLeadsRoute = AppImportLeadsRouteImport.update({
   id: '/import-leads',
   path: '/import-leads',
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AppDashboardRoute
   '/followups': typeof AppFollowupsRoute
   '/import-leads': typeof AppImportLeadsRoute
+  '/interested-leads': typeof AppInterestedLeadsRoute
   '/lead-assignment': typeof AppLeadAssignmentRoute
   '/leads': typeof AppLeadsRoute
   '/my-leads': typeof AppMyLeadsRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AppDashboardRoute
   '/followups': typeof AppFollowupsRoute
   '/import-leads': typeof AppImportLeadsRoute
+  '/interested-leads': typeof AppInterestedLeadsRoute
   '/lead-assignment': typeof AppLeadAssignmentRoute
   '/leads': typeof AppLeadsRoute
   '/my-leads': typeof AppMyLeadsRoute
@@ -149,6 +157,7 @@ export interface FileRoutesById {
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/followups': typeof AppFollowupsRoute
   '/_app/import-leads': typeof AppImportLeadsRoute
+  '/_app/interested-leads': typeof AppInterestedLeadsRoute
   '/_app/lead-assignment': typeof AppLeadAssignmentRoute
   '/_app/leads': typeof AppLeadsRoute
   '/_app/my-leads': typeof AppMyLeadsRoute
@@ -168,6 +177,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/followups'
     | '/import-leads'
+    | '/interested-leads'
     | '/lead-assignment'
     | '/leads'
     | '/my-leads'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/followups'
     | '/import-leads'
+    | '/interested-leads'
     | '/lead-assignment'
     | '/leads'
     | '/my-leads'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '/_app/dashboard'
     | '/_app/followups'
     | '/_app/import-leads'
+    | '/_app/interested-leads'
     | '/_app/lead-assignment'
     | '/_app/leads'
     | '/_app/my-leads'
@@ -300,6 +312,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLeadAssignmentRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/interested-leads': {
+      id: '/_app/interested-leads'
+      path: '/interested-leads'
+      fullPath: '/interested-leads'
+      preLoaderRoute: typeof AppInterestedLeadsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/import-leads': {
       id: '/_app/import-leads'
       path: '/import-leads'
@@ -342,6 +361,7 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppFollowupsRoute: typeof AppFollowupsRoute
   AppImportLeadsRoute: typeof AppImportLeadsRoute
+  AppInterestedLeadsRoute: typeof AppInterestedLeadsRoute
   AppLeadAssignmentRoute: typeof AppLeadAssignmentRoute
   AppLeadsRoute: typeof AppLeadsRoute
   AppMyLeadsRoute: typeof AppMyLeadsRoute
@@ -357,6 +377,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppFollowupsRoute: AppFollowupsRoute,
   AppImportLeadsRoute: AppImportLeadsRoute,
+  AppInterestedLeadsRoute: AppInterestedLeadsRoute,
   AppLeadAssignmentRoute: AppLeadAssignmentRoute,
   AppLeadsRoute: AppLeadsRoute,
   AppMyLeadsRoute: AppMyLeadsRoute,
