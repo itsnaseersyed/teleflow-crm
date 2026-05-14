@@ -1,6 +1,6 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { collection, getDocs, query, orderBy, setDoc, doc, serverTimestamp, where, deleteDoc, getDoc } from "firebase/firestore";
+import { collection, getDocs, query, orderBy, setDoc, doc, serverTimestamp, where, deleteDoc, getDoc, limit } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
 import { Badge } from "@/components/ui/badge";
@@ -79,7 +79,7 @@ function UsersPage() {
     setIsSubmitting(true);
     try {
       const usersRef = collection(db, "users");
-      const qCheck = query(usersRef, where("email", "==", formData.email));
+      const qCheck = query(usersRef, where("email", "==", formData.email), limit(1));
       const checkSnapshot = await getDocs(qCheck);
       if (!checkSnapshot.empty) {
         throw new Error("A user with this email already exists.");
