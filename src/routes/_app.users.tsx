@@ -1,6 +1,6 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { collection, getDocs, query, orderBy, setDoc, doc, serverTimestamp, where, deleteDoc, getDoc, limit } from "firebase/firestore";
+import { collection, getDocs, query, orderBy, setDoc, doc, serverTimestamp, where, deleteDoc, getDoc, limit, writeBatch } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ function UsersPage() {
     queryKey: ["users-list"],
     enabled: !loading && role === "admin",
     queryFn: async () => {
-      const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
+      const q = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(100));
       const snapshot = await getDocs(q);
       return snapshot.docs.map((d) => {
         const data = d.data();
@@ -55,7 +55,7 @@ function UsersPage() {
     queryKey: ["archived-users-list"],
     enabled: !loading && role === "admin",
     queryFn: async () => {
-      const q = query(collection(db, "archived_users"), orderBy("archivedAt", "desc"));
+      const q = query(collection(db, "archived_users"), orderBy("archivedAt", "desc"), limit(100));
       const snapshot = await getDocs(q);
       return snapshot.docs.map((d) => {
         const data = d.data();
@@ -161,16 +161,18 @@ function UsersPage() {
       const qLeads = query(leadsRef, where("assignedTo", "==", uid));
       const leadsSnap = await getDocs(qLeads);
       if (!leadsSnap.empty) {
-        for (const leadDoc of leadsSnap.docs) {
+        const batch = writeBatch(db);
+        leadsSnap.docs.forEach((leadDoc) => {
           const lData = leadDoc.data();
           if (["Assigned", "In Progress", "Follow-Up"].includes(lData.leadStatus)) {
-            await setDoc(doc(db, "leads", leadDoc.id), {
+            batch.update(leadDoc.ref, {
               assignedTo: null,
               assignedAt: null,
               leadStatus: "Unassigned"
-            }, { merge: true });
+            });
           }
-        }
+        });
+        await batch.commit();
       }
 
       // ALWAYS ARCHIVE (Never permanent delete)

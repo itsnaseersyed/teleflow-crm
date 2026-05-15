@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { leadService } from "@/services/leadService";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 
-export function useLeadsPaginated(filters: { status?: string; assignedTo?: string }) {
+export function useLeadsPaginated(filters: { status?: string; assignedTo?: string }, options?: { staleTime?: number, refetchOnWindowFocus?: boolean }) {
   return useInfiniteQuery({
     queryKey: ["leads", filters],
     queryFn: ({ pageParam }) => 
@@ -13,7 +13,8 @@ export function useLeadsPaginated(filters: { status?: string; assignedTo?: strin
       }),
     initialPageParam: null as QueryDocumentSnapshot<DocumentData> | null,
     getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.lastDoc : undefined,
-    staleTime: 1000 * 60 * 5,
+    staleTime: options?.staleTime ?? 1000 * 60 * 5,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? false,
   });
 }
 

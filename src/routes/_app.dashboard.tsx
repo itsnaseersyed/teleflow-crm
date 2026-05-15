@@ -1,9 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardStats, useUserStats } from "@/hooks/useDashboard";
+import { statsService } from "@/services/statsService";
 import { StatCard } from "@/components/stat-card";
-import { Users, PhoneCall, CalendarClock, Target, TrendingUp, CheckCircle2, Headphones, AlertCircle } from "lucide-react";
+import { Users, PhoneCall, CalendarClock, Target, TrendingUp, CheckCircle2, Headphones, AlertCircle, RefreshCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import {
   ResponsiveContainer,
   BarChart,
@@ -38,6 +41,7 @@ function startOfWeekDate() {
 function Dashboard() {
   const { role, user, profile } = useAuth();
   const navigate = useNavigate();
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const fullName = profile?.fullName;
 
@@ -85,16 +89,41 @@ function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl md:text-2xl font-semibold tracking-tight">
-          Welcome back{fullName ? `, ${fullName.split(" ")[0]}` : ""}.
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {role === "admin"
-            ? "Here's what's happening across your team today."
-            : "Here's your activity for today."}
-        </p>
-      </div>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl md:text-2xl font-semibold tracking-tight">
+              Welcome back{fullName ? `, ${fullName.split(" ")[0]}` : ""}.
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {role === "admin"
+                ? "Here's what's happening across your team today."
+                : "Here's your activity for today."}
+            </p>
+          </div>
+          {role === "admin" && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-2" 
+              onClick={async () => {
+                setIsSyncing(true);
+                try {
+                  await statsService.syncStats();
+                  toast.success("Statistics synchronized successfully!");
+                  window.location.reload(); // Refresh to show new stats
+                } catch (error) {
+                  toast.error("Failed to sync statistics");
+                } finally {
+                  setIsSyncing(false);
+                }
+              }}
+              disabled={isSyncing}
+            >
+              <RefreshCcw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+              {isSyncing ? "Syncing..." : "Sync Stats"}
+            </Button>
+          )}
+        </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {role === "admin" ? (

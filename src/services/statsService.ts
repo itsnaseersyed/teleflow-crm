@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, increment, serverTimestamp, collection, query, where, getCountFromServer } from "firebase/firestore";
 import { db } from "./firestore/client";
 import { DashboardStats, UserStats } from "./firestore/types";
 
@@ -17,7 +17,23 @@ export const statsService = {
     if (snap.exists()) {
       return snap.data() as DashboardStats;
     }
-    return null;
+    
+    // Lazy initialize if missing
+    const initial = {
+      totalLeads: 0,
+      assignedLeads: 0,
+      unassignedLeads: 0,
+      convertedLeads: 0,
+      notInterestedLeads: 0,
+      followUpLeads: 0,
+      inProgressLeads: 0,
+      completedLeads: 0,
+      totalCalls: 0,
+      telecallerCount: 0,
+      lastUpdated: serverTimestamp() as any,
+    };
+    await setDoc(doc(db, "stats", GLOBAL_STATS_ID), initial);
+    return initial as DashboardStats;
   },
 
   /**
@@ -30,7 +46,6 @@ export const statsService = {
       return snap.data() as UserStats;
     }
     
-    // Initialize if missing
     const initialStats: UserStats = {
       userId,
       totalLeads: 0,
@@ -49,36 +64,12 @@ export const statsService = {
   },
 
   /**
-   * Initialize global stats doc if it doesn't exist
-   */
-  async initGlobalStats() {
-    const ref = doc(db, "stats", GLOBAL_STATS_ID);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) {
-      await setDoc(ref, {
-        totalLeads: 0,
-        assignedLeads: 0,
-        unassignedLeads: 0,
-        convertedLeads: 0,
-        notInterestedLeads: 0,
-        followUpLeads: 0,
-        inProgressLeads: 0,
-        completedLeads: 0,
-        totalCalls: 0,
-        telecallerCount: 0,
-        lastUpdated: serverTimestamp() as any,
-      });
-    }
-  },
-
-  /**
    * Update stats when a lead status changes (Safe Version)
    */
   async updateStatusStats(oldStatus: string, newStatus: string, userId?: string) {
     const ref = doc(db, "stats", GLOBAL_STATS_ID);
     
-    // Ensure global doc exists
-    await this.initGlobalStats();
+    // Use setDoc with merge: true to avoid needing initGlobalStats
 
     const updates: any = {
       lastUpdated: serverTimestamp() as any,
@@ -104,7 +95,7 @@ export const statsService = {
     if (newField) updates[newField] = increment(1);
 
     if (Object.keys(updates).length > 1) {
-      await updateDoc(ref, updates);
+      await setDoc(ref, updates, { merge: true });
     }
 
     if (userId) {
@@ -136,13 +127,13 @@ export const statsService = {
    * Update stats when a call is logged
    */
   async incrementCallCount(userId: string) {
-    await this.initGlobalStats();
+    const ref = doc(db, "stats", GLOBAL_STATS_ID);
     
     // Update global
-    await updateDoc(doc(db, "stats", GLOBAL_STATS_ID), {
+    await setDoc(ref, {
       totalCalls: increment(1),
       lastUpdated: serverTimestamp() as any,
-    });
+    }, { merge: true });
 
     // Update user
     const userRef = doc(db, "stats", `user_${userId}`);
@@ -190,7 +181,6 @@ export const statsService = {
    * Update stats when a new lead is created
    */
   async incrementLeadCount(isAssigned: boolean) {
-    await this.initGlobalStats();
     const ref = doc(db, "stats", GLOBAL_STATS_ID);
     
     const updates: any = {
@@ -204,7 +194,59 @@ export const statsService = {
       updates.unassignedLeads = increment(1);
     }
 
-    await updateDoc(ref, updates);
+    await setDoc(ref, updates, { merge: true });
+  },
+
+  /**
+   * RE-SYNC ALL STATS (Admin Only)
+   * Scans the entire collection to reset dashboard counters to reality.
+   * Use this to fix negative numbers or drift.
+   */
+  async syncStats() {
+    const leadsRef = collection(db, "leads");
+    const usersRef = collection(db, "users");
+    
+    // 1. Get real counts from server
+    const [
+      totalSnap,
+      unassignedSnap,
+      assignedSnap,
+      inProgressSnap,
+      followUpSnap,
+      completedSnap,
+      convertedSnap,
+      notInterestedSnap,
+      usersSnap
+    ] = await Promise.all([
+      getCountFromServer(query(leadsRef)),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "Unassigned"))),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "Assigned"))),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "In Progress"))),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "Follow-Up"))),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "Completed"))),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "Converted"))),
+      getCountFromServer(query(leadsRef, where("leadStatus", "==", "Not Interested"))),
+      getCountFromServer(query(usersRef, where("role", "==", "telecaller")))
+    ]);
+
+    const newStats = {
+      totalLeads: totalSnap.data().count,
+      unassignedLeads: unassignedSnap.data().count,
+      assignedLeads: assignedSnap.data().count,
+      inProgressLeads: inProgressSnap.data().count,
+      followUpLeads: followUpSnap.data().count,
+      completedLeads: completedSnap.data().count,
+      convertedLeads: convertedSnap.data().count,
+      notInterestedLeads: notInterestedSnap.data().count,
+      telecallersCount: usersSnap.data().count,
+      lastUpdated: serverTimestamp(),
+      lastSync: serverTimestamp()
+    };
+
+    // 2. Overwrite the global stats document with reality
+    await setDoc(doc(db, "stats", GLOBAL_STATS_ID), newStats, { merge: true });
+    
+    return newStats;
   }
 };
 

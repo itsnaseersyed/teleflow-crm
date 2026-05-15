@@ -144,13 +144,20 @@ export const leadService = {
     }
 
     await batch.commit();
-
-    // Note: Stats updates for bulk actions should ideally happen in a loop or optimized service call
-    // For now, we'll trigger simple increments. 
-    // In a high-volume scenario, this should be a Cloud Function or more robust batch logic.
-    for (let i = 0; i < leadIds.length; i++) {
-       await statsService.updateStatusStats("Unassigned", "Assigned", telecallerId);
-    }
+    
+    // Optimized stats update: Single call with calculated increment
+    const count = leadIds.length;
+    await statsService.updateUserStats(telecallerId, {
+      assignedLeads: count,
+      totalLeads: count
+    });
+    
+    // Update global stats
+    await updateDoc(doc(db, "stats", "global"), {
+      unassignedLeads: increment(-count),
+      assignedLeads: increment(count),
+      lastUpdated: serverTimestamp()
+    });
   },
 
   /**

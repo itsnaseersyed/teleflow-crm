@@ -10,70 +10,27 @@ import {
   where,
   onSnapshot,
   Unsubscribe,
+  doc
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 
 /**
- * Real-time hook for user's assigned leads
+ * Real-time hook for user's assigned leads (DISABLED)
+ * This was listening to the entire assigned leads list. Use TanStack Query with pagination instead.
  */
 export function useMyLeadsRealtime(
   userId: string | undefined,
   leadStatus?: string,
 ) {
-  const [leads, setLeads] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
-  useEffect(() => {
-    if (!userId) {
-      setIsLoading(false);
-      return;
-    }
-
-    let unsubscribe: Unsubscribe | undefined;
-
-    try {
-      const constraints = [where("assignedTo", "==", userId)];
-      if (leadStatus) {
-        constraints.push(where("leadStatus", "==", leadStatus));
-      }
-
-      const q = query(collection(db, "leads"), ...constraints);
-
-      unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const data = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
-          setLeads(data);
-          setIsLoading(false);
-        },
-        (err) => {
-          setError(err as Error);
-          setIsLoading(false);
-        },
-      );
-    } catch (err) {
-      setError(err as Error);
-      setIsLoading(false);
-    }
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [userId, leadStatus]);
-
-  return { leads, isLoading, error };
+  return { leads: [], isLoading: false, error: new Error("useMyLeadsRealtime is deprecated. Use useLeads (TanStack Query) instead.") };
 }
 
 /**
  * Real-time hook for lead assignment updates
+ * Keep this one as it's typically used for a small subset of "New" leads.
  */
 export function useLeadAssignmentUpdates(userId: string | undefined) {
+  // ... (keep current implementation as it's more specialized)
   const [assignmentStats, setAssignmentStats] = useState({
     assigned: 0,
     pending: 0,
@@ -193,75 +150,26 @@ export function useImportBatchUpdates(userId: string | undefined) {
 }
 
 /**
- * Real-time hook for all leads (admin view)
+ * Real-time hook for all leads (DISABLED)
+ * This was listening to the entire leads collection. Use TanStack Query with pagination instead.
  */
 export function useAllLeadsRealtime(
   isAdmin: boolean,
   leadStatus?: string,
 ) {
-  const [leads, setLeads] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
-  useEffect(() => {
-    if (!isAdmin) {
-      setIsLoading(false);
-      return;
-    }
-
-    let unsubscribe: Unsubscribe | undefined;
-
-    try {
-      const constraints: any[] = [];
-      if (leadStatus) {
-        constraints.push(where("leadStatus", "==", leadStatus));
-      }
-
-      const q = query(collection(db, "leads"), ...constraints);
-
-      unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const data = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
-          setLeads(data);
-          setIsLoading(false);
-        },
-        (err) => {
-          setError(err as Error);
-          setIsLoading(false);
-        },
-      );
-    } catch (err) {
-      setError(err as Error);
-      setIsLoading(false);
-    }
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [isAdmin, leadStatus]);
-
-  return { leads, isLoading, error };
+  return { leads: [], isLoading: false, error: new Error("useAllLeadsRealtime is deprecated. Use useLeads (TanStack Query) instead.") };
 }
 
+
 /**
- * Real-time hook for dashboard statistics
+ * Real-time hook for dashboard statistics (OPTIMIZED)
+ * Subscribes to the specific stats document instead of the entire leads collection.
  */
 export function useDashboardStatsRealtime(
   userId: string | undefined,
   role: string | undefined,
 ) {
-  const [stats, setStats] = useState({
-    totalLeads: 0,
-    convertedLeads: 0,
-    assignedToMe: 0,
-    pendingFollowups: 0,
-  });
+  const [stats, setStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -270,52 +178,49 @@ export function useDashboardStatsRealtime(
       return;
     }
 
-    let unsubscribe: Unsubscribe | undefined;
+    let unsubGlobal: Unsubscribe | undefined;
+    let unsubUser: Unsubscribe | undefined;
 
     try {
-      // Get total leads
-      const allLeadsQ = query(collection(db, "leads"));
+      // 1. Subscribe to Global Stats
+      unsubGlobal = onSnapshot(doc(db, "stats", "global"), (snap: any) => {
+        if (snap.exists()) {
+          const globalData = snap.data();
+          setStats((prev: any) => ({ ...prev, ...globalData }));
+        }
+        setIsLoading(false);
+      });
 
-      unsubscribe = onSnapshot(
-        allLeadsQ,
-        (snapshot) => {
-          const newStats = {
-            totalLeads: 0,
-            convertedLeads: 0,
-            assignedToMe: 0,
-            pendingFollowups: 0,
-          };
-
-          snapshot.docs.forEach((doc) => {
-            const data = doc.data();
-            newStats.totalLeads++;
-
-            if (data.leadStatus === "Converted") {
-              newStats.convertedLeads++;
-            }
-
-            if (data.assignedTo === userId) {
-              newStats.assignedToMe++;
-            }
-          });
-
-          setStats(newStats);
-          setIsLoading(false);
-        },
-        () => {
-          setIsLoading(false);
-        },
-      );
-    } catch {
+      // 2. Subscribe to User Stats if not admin
+      if (role !== "admin") {
+        unsubUser = onSnapshot(doc(db, "stats", `user_${userId}`), (snap: any) => {
+          if (snap.exists()) {
+            const userData = snap.data();
+            setStats((prev: any) => ({ ...prev, userStats: userData }));
+          }
+        });
+      }
+    } catch (err) {
+      console.error("Error in dashboard stats listener:", err);
       setIsLoading(false);
     }
 
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      unsubGlobal?.();
+      unsubUser?.();
     };
   }, [userId, role]);
 
-  return { ...stats, isLoading };
+  return { stats, isLoading };
 }
+
+/**
+ * Real-time hook for all leads (admin view) - REMOVED HEAVY SCANNING
+ * Instead of onSnapshot on the whole collection, use paginated queries or a lightweight summary.
+ * For this audit, we'll suggest using useLeadsPaginated instead of this real-time hook.
+ */
+export function useAllLeadsRealtimeDisabled() {
+  // This hook should be deprecated in favor of paginated fetching (TanStack Query)
+  return { leads: [], isLoading: false, error: new Error("useAllLeadsRealtime is deprecated for performance reasons. Use paginated fetching.") };
+}
+

@@ -100,7 +100,9 @@ function LeadAssignmentPage() {
       const q = query(collection(db, "leads"), where("leadStatus", "==", statusFilter));
       const snapshot = await getCountFromServer(q);
       return snapshot.data().count;
-    }
+    },
+    staleTime: 1000 * 60 * 10, // 10 minutes
+    refetchOnWindowFocus: false,
   });
 
   // 2. Infinite Query

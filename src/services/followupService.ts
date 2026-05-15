@@ -7,6 +7,7 @@ import {
   orderBy,
   doc,
   updateDoc,
+  startAfter,
   serverTimestamp
 } from "firebase/firestore";
 import { db } from "./firestore/client";
@@ -29,6 +30,10 @@ export const followupService = {
 
     if (userId) {
       q = query(q, where("assignedTo", "==", userId));
+    }
+
+    if (lastDoc) {
+      q = query(q, startAfter(lastDoc));
     }
 
     const snapshot = await getDocs(q);
@@ -59,7 +64,7 @@ export const followupService = {
 
     return {
       items,
-      lastDoc: snapshot.docs[snapshot.docs.length - 1]
+      lastDoc: snapshot.docs[snapshot.docs.length - 1] || null
     };
   },
 

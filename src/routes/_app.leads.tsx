@@ -116,7 +116,12 @@ function LeadsPage() {
         })
         .filter(b => b.batchStatus !== "archived")
         .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
-    }
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // 2. Fetch Telecallers
@@ -126,7 +131,12 @@ function LeadsPage() {
       const q = query(collection(db, "users"), where("role", "==", "telecaller"));
       const snap = await getDocs(q);
       return snap.docs.map(d => ({ id: d.id, fullName: d.data().fullName })) as any[];
-    }
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // 3. Total Count (Scoped to Batch if selected)
@@ -139,7 +149,12 @@ function LeadsPage() {
       if (telecallerFilter !== "all") q = query(q, where("assignedTo", "==", telecallerFilter));
       const snap = await getCountFromServer(q);
       return snap.data().count;
-    }
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // 4. Infinite Query
@@ -194,13 +209,18 @@ function LeadsPage() {
         });
       }
 
-      return {
-        leads,
-        lastDoc: snap.docs[snap.docs.length - 1] || null,
-      };
-    },
-    getNextPageParam: (lastPage) => lastPage.lastDoc || undefined,
-  });
+        return {
+          leads,
+          lastDoc: snap.docs[snap.docs.length - 1] || null,
+        };
+      },
+      getNextPageParam: (lastPage) => lastPage.lastDoc || undefined,
+      staleTime: Infinity,
+      gcTime: Infinity,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    });
 
   const allLeads = useMemo(() => {
     const fetched = data?.pages.flatMap((page) => page.leads) ?? [];

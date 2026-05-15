@@ -86,7 +86,7 @@ function InterestedLeadsPage() {
     hasNextPage,
     isFetchingNextPage,
     isLoading
-  } = useLeadsPaginated({ status: "Interested" });
+  } = useLeadsPaginated({ status: "Interested" }, { staleTime: 0, refetchOnWindowFocus: true });
 
   const { updateLead, updateStatus } = useLeadMutations();
 
@@ -105,6 +105,7 @@ function InterestedLeadsPage() {
       })) as UserType[];
     },
     enabled: role === "admin",
+    staleTime: 1000 * 60 * 60, // 1 hour
   });
 
   // Create lookup map of userId -> fullName

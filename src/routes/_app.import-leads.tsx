@@ -13,6 +13,8 @@ import {
   doc,
   deleteDoc,
   updateDoc,
+  getDoc,
+  limit
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
@@ -165,30 +167,33 @@ function ImportLeadsPage() {
         },
       });
 
-      // Batch write leads (strip undefined fields — Firestore rejects them)
-      const batch = writeBatch(db);
-      leads.forEach((lead) => {
-        const leadRef = doc(collection(db, "leads"));
-        const leadData: Record<string, any> = {
-          leadStatus: "Unassigned",
-          uploadBatchId: batchRef.id,
-          uploadSource: "csv_import",
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
-        };
-        // Only include defined fields from the parsed lead
-        (Object.keys(lead) as (keyof typeof lead)[]).forEach((key) => {
-          if (lead[key] !== undefined) {
-            leadData[key] = lead[key];
-          }
-        });
-        batch.set(leadRef, leadData);
-      });
+      // Batch write leads in chunks of 500 (Firestore limit)
+      const chunks = [];
+      for (let i = 0; i < leads.length; i += 500) {
+        chunks.push(leads.slice(i, i + 500));
+      }
 
-      await batch.commit();
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach((lead) => {
+          const leadRef = doc(collection(db, "leads"));
+          const leadData: Record<string, any> = {
+            leadStatus: "Unassigned",
+            uploadBatchId: batchRef.id,
+            uploadSource: "csv_import",
+            createdBy: user.uid,
+            createdAt: serverTimestamp(),
+          };
+          (Object.keys(lead) as (keyof typeof lead)[]).forEach((key) => {
+            if (lead[key] !== undefined) leadData[key] = lead[key];
+          });
+          batch.set(leadRef, leadData);
+        });
+        await batch.commit();
+      }
 
       // Update batch status
-      await updateBatchStatus(batchRef.id, "completed");
+      await updateDoc(batchRef, { status: "completed" });
 
       return {
         successful: leads.length,
@@ -199,7 +204,8 @@ function ImportLeadsPage() {
     onSuccess: (summary) => {
       setImportSummary(summary);
       setImportStep("summary");
-      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["leads-infinite"] });
+      qc.invalidateQueries({ queryKey: ["leads-total-count"] });
       qc.invalidateQueries({ queryKey: ["import-batches"] });
       toast.success("Leads imported successfully!");
     },
@@ -211,75 +217,38 @@ function ImportLeadsPage() {
 
   const undoBatchMutation = useMutation({
     mutationFn: async (batchId: string) => {
-      // Step 1: Get the batch to check status
-      const batchDoc = await getDocs(query(collection(db, "leadImportBatches"), where("__name__", "==", batchId)));
-      if (batchDoc.empty) throw new Error("Batch not found");
-      const batchData = batchDoc.docs[0].data();
+      // Step 1: Get the batch
+      const batchRef = doc(db, "leadImportBatches", batchId);
+      const batchSnap = await getDoc(batchRef);
+      if (!batchSnap.exists()) throw new Error("Batch not found");
+      const batchData = batchSnap.data();
 
-      // Step 2: Fetch all leads that belong to this batch
-      const leadsQuery = query(collection(db, "leads"), where("uploadBatchId", "==", batchId));
-      const leadsSnapshot = await getDocs(leadsQuery);
-
-      // Step 3: Check for assigned leads and calls
-      const assignedLeads: string[] = [];
-      const leadsWithCalls: string[] = [];
-      const leadsToDelete: string[] = [];
-
-      for (const leadDoc of leadsSnapshot.docs) {
-        const leadData = leadDoc.data();
-        const leadId = leadDoc.id;
-
-        // Check if lead is assigned
-        if (leadData.assignedTo) {
-          assignedLeads.push(leadId);
-        }
-
-        // Check if lead has any calls
-        const callsQuery = query(collection(db, "calls"), where("leadId", "==", leadId));
-        const callsSnapshot = await getDocs(callsQuery);
-        if (callsSnapshot.size > 0) {
-          leadsWithCalls.push(leadId);
-        }
-
-        // Mark for deletion only if unassigned and no calls
-        if (!leadData.assignedTo && callsSnapshot.size === 0) {
-          leadsToDelete.push(leadId);
-        }
+      // PROTECT: Don't delete if leads are already assigned or calls are made
+      if ((batchData.assignedLeadsCount || 0) > 0 || (batchData.completedCallsCount || 0) > 0) {
+        throw new Error("Cannot delete batch: Leads are already assigned or have completed calls.");
       }
 
-      // Step 4: If there are assigned leads or calls, throw error with details
-      if (assignedLeads.length > 0 || leadsWithCalls.length > 0) {
-        const errorMsg = `Cannot delete batch: ${assignedLeads.length} assigned leads, ${leadsWithCalls.length} leads with calls. Please reassign leads first.`;
-        throw new Error(errorMsg);
+      // Step 2: Fetch leads in chunks to delete
+      const leadsQuery = query(collection(db, "leads"), where("uploadBatchId", "==", batchId), limit(500));
+      let leadsSnapshot = await getDocs(leadsQuery);
+
+      while (!leadsSnapshot.empty) {
+        const batch = writeBatch(db);
+        leadsSnapshot.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        
+        // Fetch next 500
+        leadsSnapshot = await getDocs(leadsQuery);
       }
 
-      // Step 5: Delete only unassigned leads with no calls
-      if (leadsToDelete.length > 0) {
-        const batches = [];
-        let currentBatch = writeBatch(db);
-        let count = 0;
-
-        for (const leadId of leadsToDelete) {
-          currentBatch.delete(doc(db, "leads", leadId));
-          count++;
-          if (count === 500) {
-            batches.push(currentBatch.commit());
-            currentBatch = writeBatch(db);
-            count = 0;
-          }
-        }
-        if (count > 0) {
-          batches.push(currentBatch.commit());
-        }
-        await Promise.all(batches);
-      }
-
-      // Step 6: Archive the batch instead of deleting (for safety)
-      await updateDoc(doc(db, "leadImportBatches", batchId), {
+      // Step 3: Archive the batch
+      await updateDoc(batchRef, {
         batchStatus: "archived",
         status: "archived",
+        archivedAt: serverTimestamp()
       });
     },
+
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["import-batches"] });

@@ -8,7 +8,9 @@ export function useFollowups(userId?: string, status: string = "Pending") {
     queryFn: ({ pageParam }) => followupService.getFollowupsPaginated(userId, status, pageParam),
     initialPageParam: null as any,
     getNextPageParam: (lastPage) => lastPage.lastDoc || undefined,
-    enabled: !!userId || userId === undefined, // Allow global if userId is explicitly undefined (admin)
+    enabled: !!userId || userId === undefined,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 }
 
