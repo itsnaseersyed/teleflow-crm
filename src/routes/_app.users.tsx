@@ -88,7 +88,7 @@ function UsersPage() {
       const newId = "tc_" + Math.random().toString(36).substring(2, 11);
       await setDoc(doc(db, "users", newId), {
         fullName: formData.fullName,
-        email: formData.email,
+        email: formData.email.toLowerCase().trim(),
         phone: formData.phone,
         password: formData.password,
         role: "telecaller",
