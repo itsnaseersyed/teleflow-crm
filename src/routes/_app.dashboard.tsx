@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useEffect } from "react";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { useDashboardStats, useUserStats } from "@/hooks/useDashboard";
 import { StatCard } from "@/components/stat-card";
 import { Users, PhoneCall, CalendarClock, Target, TrendingUp, CheckCircle2, Headphones, AlertCircle } from "lucide-react";

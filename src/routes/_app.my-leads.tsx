@@ -10,7 +10,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { useQueue } from "@/hooks/useQueue";
 import { useUserStats } from "@/hooks/useDashboard";
 import { Button } from "@/components/ui/button";

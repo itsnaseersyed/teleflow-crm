@@ -11,7 +11,8 @@ export const Route = createFileRoute("/_app/profile")({
 });
 
 function ProfilePage() {
-  const { user, fullName, role } = useAuth();
+  const { user, profile, role } = useAuth();
+  const fullName = profile?.fullName || user?.displayName;
 
   const { data } = useQuery({
     queryKey: ["my-stats", user?.uid],

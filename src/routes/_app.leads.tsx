@@ -19,7 +19,7 @@ import {
   increment
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { leadService } from "@/services/leadService";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

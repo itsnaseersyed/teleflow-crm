@@ -14,7 +14,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { useLeadMutations } from "@/hooks/useLeads";
 import { callService } from "@/services/callService";
 import { Button } from "@/components/ui/button";
@@ -88,6 +88,7 @@ interface CallRecord {
 
 function CallPage() {
   const { leadId } = Route.useParams();
+  const search = Route.useSearch();
   const { user, role, isAdmin } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -207,7 +208,7 @@ function CallPage() {
       return true;
     },
     onSuccess: async () => {
-      const { from } = Route.useSearch();
+      const { from } = search;
       toast.success("Call saved successfully!");
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
@@ -261,7 +262,7 @@ function CallPage() {
   };
 
   const handleNavigation = (direction: "prev" | "next") => {
-    const { from } = Route.useSearch();
+    const { from } = search;
     const newIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
     if (newIndex >= 0 && newIndex < allLeads.length) {
       navigate({

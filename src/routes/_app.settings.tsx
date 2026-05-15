@@ -14,7 +14,7 @@ export const Route = createFileRoute("/_app/settings")({
 });
 
 function SettingsPage() {
-  const { user, role, refreshRole } = useAuth();
+  const { user, profile, role } = useAuth();
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -42,7 +42,7 @@ function SettingsPage() {
         phone,
       });
       toast.success("Profile updated");
-      refreshRole();
+      // Profile will automatically re-sync via useQuery in AuthProvider
     } catch (e: any) {
       toast.error(e.message ?? "Failed to update profile");
     } finally {

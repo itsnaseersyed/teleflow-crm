@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { useFollowups, useFollowupMutations } from "@/hooks/useFollowups";
 import { CalendarClock, Check, Phone, MessageCircle, Pencil, User, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";

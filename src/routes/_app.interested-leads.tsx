@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { collection, query, doc, getDocs } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { useLeadsPaginated, useLeadMutations } from "@/hooks/useLeads";
 import { leadService } from "@/services/leadService";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
