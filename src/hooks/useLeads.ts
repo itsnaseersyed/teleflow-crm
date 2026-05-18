@@ -1,6 +1,15 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { leadService } from "@/services/leadService";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
+
+export function useAllLeads(filters: { status?: string; assignedTo?: string }, options?: { staleTime?: number, refetchOnWindowFocus?: boolean }) {
+  return useQuery({
+    queryKey: ["leads", "all", filters],
+    queryFn: () => leadService.getLeads(filters),
+    staleTime: options?.staleTime ?? 1000 * 60 * 5,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? false,
+  });
+}
 
 export function useLeadsPaginated(filters: { status?: string; assignedTo?: string }, options?: { staleTime?: number, refetchOnWindowFocus?: boolean }) {
   return useInfiniteQuery({

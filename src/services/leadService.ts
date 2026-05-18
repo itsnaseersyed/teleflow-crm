@@ -25,6 +25,39 @@ const LEADS_COLLECTION = "leads";
 
 export const leadService = {
   /**
+   * Fetch all leads matching filters (no pagination)
+   */
+  async getLeads(params: {
+    status?: string;
+    assignedTo?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }) {
+    const { 
+      status, 
+      assignedTo, 
+      sortBy = "createdAt", 
+      sortOrder = "desc" 
+    } = params;
+
+    let q = query(
+      collection(db, LEADS_COLLECTION),
+      orderBy(sortBy, sortOrder)
+    );
+
+    if (status && status !== "All") {
+      q = query(q, where("leadStatus", "==", status));
+    }
+
+    if (assignedTo) {
+      q = query(q, where("assignedTo", "==", assignedTo));
+    }
+
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Lead));
+  },
+
+  /**
    * Fetch leads with pagination
    */
   async getLeadsPaginated(params: {

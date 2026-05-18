@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { collection, query, doc, getDocs } from "firebase/firestore";
 import { db } from "@/services/firestore/client";
 import { useAuth } from "@/lib/auth";
-import { useLeadsPaginated, useLeadMutations } from "@/hooks/useLeads";
+import { useAllLeads, useLeadMutations } from "@/hooks/useLeads";
 import { leadService } from "@/services/leadService";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,20 +45,7 @@ export const Route = createFileRoute("/_app/interested-leads")({
   component: InterestedLeadsPage,
 });
 
-type Lead = {
-  id: string;
-  customerName: string;
-  mobileNumber: string;
-  city?: string;
-  leadStatus: string;
-  feedbackNotes?: string;
-  followUpDate?: string;
-  assignedTo?: string;
-  createdAt: Date;
-  createdBy: string;
-  lastCallStatus?: string;
-  lastCalledAt?: Date;
-};
+import { Lead } from "@/services/firestore/types";
 
 type UserType = {
   id: string;
@@ -70,6 +57,7 @@ function InterestedLeadsPage() {
   const { role, user } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const [sortBy, setSortBy] = useState<"latestCalled" | "oldestCalled" | "newestSourced">("latestCalled");
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
 
   // Guard: Redirect non-admins to my-leads
@@ -79,18 +67,13 @@ function InterestedLeadsPage() {
     }
   }, [role, navigate]);
 
-  // Use paginated hook
+  // Use non-paginated hook to fetch all interested leads
   const {
-    data,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
+    data: leads = [],
     isLoading
-  } = useLeadsPaginated({ status: "Interested" }, { staleTime: 0, refetchOnWindowFocus: true });
+  } = useAllLeads({ status: "Interested" }, { staleTime: 0, refetchOnWindowFocus: true });
 
   const { updateLead, updateStatus } = useLeadMutations();
-
-  const leads = data?.pages.flatMap((page: any) => page.leads) ?? [];
 
   // Fetch all users (telecallers) to map names
   const { data: users = [] } = useQuery({
@@ -122,6 +105,24 @@ function InterestedLeadsPage() {
       (l.city || "").toLowerCase().includes(s) ||
       telecallerName.includes(s)
     );
+  });
+
+  // Client-side sort by lastCalledAt or createdAt
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "latestCalled") {
+      const aTime = a.lastCalledAt ? ((a.lastCalledAt as any).toDate ? (a.lastCalledAt as any).toDate().getTime() : new Date(a.lastCalledAt).getTime()) : 0;
+      const bTime = b.lastCalledAt ? ((b.lastCalledAt as any).toDate ? (b.lastCalledAt as any).toDate().getTime() : new Date(b.lastCalledAt).getTime()) : 0;
+      return bTime - aTime;
+    }
+    if (sortBy === "oldestCalled") {
+      const aTime = a.lastCalledAt ? ((a.lastCalledAt as any).toDate ? (a.lastCalledAt as any).toDate().getTime() : new Date(a.lastCalledAt).getTime()) : Infinity;
+      const bTime = b.lastCalledAt ? ((b.lastCalledAt as any).toDate ? (b.lastCalledAt as any).toDate().getTime() : new Date(b.lastCalledAt).getTime()) : Infinity;
+      return aTime - bTime;
+    }
+    // Default to newestSourced: sort by createdAt desc
+    const aTime = a.createdAt ? ((a.createdAt as any).toDate ? (a.createdAt as any).toDate().getTime() : new Date(a.createdAt).getTime()) : 0;
+    const bTime = b.createdAt ? ((b.createdAt as any).toDate ? (b.createdAt as any).toDate().getTime() : new Date(b.createdAt).getTime()) : 0;
+    return bTime - aTime;
   });
 
 
@@ -159,9 +160,24 @@ function InterestedLeadsPage() {
             className="pl-9 bg-card"
           />
         </div>
+        <div className="w-full sm:w-[200px]">
+          <Select
+            value={sortBy}
+            onValueChange={(val: any) => setSortBy(val)}
+          >
+            <SelectTrigger className="bg-card w-full">
+              <SelectValue placeholder="Sort By" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="latestCalled">Latest Called</SelectItem>
+              <SelectItem value="oldestCalled">Oldest Called</SelectItem>
+              <SelectItem value="newestSourced">Recently Sourced</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {sorted.length === 0 ? (
         <Card className="flex flex-col items-center justify-center text-center p-12 bg-card border">
           <CheckSquare className="h-12 w-12 text-muted-foreground/60 mb-3" />
           <p className="text-base font-semibold">No Interested Leads Found</p>
@@ -171,7 +187,7 @@ function InterestedLeadsPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {filtered.map((lead) => {
+          {sorted.map((lead) => {
             const assignedName = usersMap.get(lead.assignedTo || "") || "Unassigned";
 
             return (
@@ -287,18 +303,7 @@ function InterestedLeadsPage() {
         </div>
       )}
 
-      {hasNextPage && (
-        <div className="flex justify-center pt-4">
-          <Button
-            variant="outline"
-            onClick={() => fetchNextPage()}
-            disabled={isFetchingNextPage}
-            className="w-full sm:w-auto"
-          >
-            {isFetchingNextPage ? "Loading more..." : "Load More"}
-          </Button>
-        </div>
-      )}
+
 
       {/* Editing Dialog Modal */}
       {editingLead && (
@@ -355,7 +360,7 @@ function InterestedLeadsPage() {
                   <Label htmlFor="leadStatus">Lead Status</Label>
                   <Select
                     value={editingLead.leadStatus}
-                    onValueChange={(val) => setEditingLead({ ...editingLead, leadStatus: val })}
+                    onValueChange={(val) => setEditingLead({ ...editingLead, leadStatus: val as Lead["leadStatus"] })}
                   >
                     <SelectTrigger id="leadStatus">
                       <SelectValue placeholder="Select status" />
