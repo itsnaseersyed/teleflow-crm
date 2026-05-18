@@ -52,6 +52,7 @@ export const Route = createFileRoute("/_app/lead/$leadId/call")({
   validateSearch: (search: Record<string, unknown>) => {
     return {
       from: (search.from as string) || undefined,
+      status: (search.status as string) || undefined,
     };
   },
 });
@@ -129,7 +130,7 @@ function CallPage() {
 
   // Fetch all relevant leads for navigation
   const { data: allLeads = [] } = useQuery({
-    queryKey: ["user-leads-nav", user?.uid, isAdmin],
+    queryKey: ["user-leads-nav", user?.uid, isAdmin, search.status],
     enabled: !!user,
     queryFn: async () => {
       if (!user) return [];
@@ -144,10 +145,12 @@ function CallPage() {
       } else {
         q = query(
           collection(db, "leads"), 
-          where("assignedTo", "==", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(100)
+          where("assignedTo", "==", user.uid)
         );
+        if (search.status && search.status !== "All") {
+          q = query(q, where("leadStatus", "==", search.status));
+        }
+        q = query(q, orderBy("createdAt", "desc"), limit(100));
       }
 
       const snap = await getDocs(q);
@@ -229,7 +232,7 @@ function CallPage() {
           navigate({
             to: "/lead/$leadId/call",
             params: { leadId: allLeads[currentIndex + 1].id },
-            search: { from: "my-leads" }
+            search: { from: "my-leads", status: search.status }
           });
         }, 500);
       } else {
@@ -262,13 +265,13 @@ function CallPage() {
   };
 
   const handleNavigation = (direction: "prev" | "next") => {
-    const { from } = search;
+    const { from, status } = search;
     const newIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
     if (newIndex >= 0 && newIndex < allLeads.length) {
       navigate({
         to: "/lead/$leadId/call",
         params: { leadId: allLeads[newIndex].id },
-        search: { from },
+        search: { from, status },
       });
     }
   };
@@ -292,14 +295,14 @@ function CallPage() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <Button
           variant="outline"
           onClick={() => navigate({ to: role === 'admin' ? '/leads' : '/my-leads' })}
-          className="gap-2"
+          className="gap-2 px-2 sm:px-4"
         >
           <ChevronLeft className="h-4 w-4" />
-          Back to Queue
+          <span className="hidden sm:inline">Back to Queue</span>
         </Button>
 
         <div className="text-center">
@@ -343,7 +346,7 @@ function CallPage() {
             </CardHeader>
 
             <CardContent className="space-y-4">
-              <div className="flex gap-3 mb-4">
+              <div className="flex flex-col sm:flex-row gap-3 mb-4">
                 <a href={`tel:${currentLead.mobileNumber}`} className="flex-1">
                   <Button className="w-full bg-gradient-accent text-white gap-2 font-semibold">
                     <Phone className="h-4 w-4" />
@@ -386,7 +389,7 @@ function CallPage() {
               <CardDescription>Update the call status and add notes</CardDescription>
             </CardHeader>
 
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="call-status" className="flex items-center gap-2">
                   <Zap className="h-4 w-4" />
@@ -436,11 +439,11 @@ function CallPage() {
                 />
               </div>
 
-              <div className="flex gap-3 pt-4 flex-wrap">
+              <div className="flex flex-col sm:flex-row gap-3 pt-4">
                 <Button
                   onClick={handleSaveCall}
                   disabled={isSaveDisabled}
-                  className="flex-1 bg-gradient-accent text-white gap-2"
+                  className="flex-1 bg-gradient-accent text-white gap-2 w-full"
                 >
                   {saveMutation.isPending ? (
                     <>
@@ -453,25 +456,6 @@ function CallPage() {
                       Save & {hasNext ? "Next" : "Finish"}
                     </>
                   )}
-                </Button>
-
-                <Button
-                  variant="outline"
-                  className="w-full border-orange-200 text-orange-600 hover:bg-orange-50 gap-2 mt-2"
-                  disabled={saveMutation.isPending}
-                  onClick={async () => {
-                    if (!confirm("Escalate this lead to a senior?")) return;
-                    await updateDoc(doc(db, "leads", leadId!), {
-                      escalationStatus: "pending_senior",
-                      escalatedAt: serverTimestamp(),
-                      escalationNotes: feedbackNotes || "Manual escalation"
-                    });
-                    toast.success("Lead escalated to senior!");
-                    navigate({ to: "/my-leads" });
-                  }}
-                >
-                  <ArrowUp className="h-4 w-4" />
-                  Escalate to Senior
                 </Button>
               </div>
             </CardContent>

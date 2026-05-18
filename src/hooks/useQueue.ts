@@ -19,11 +19,14 @@ export function useQueue(userId?: string, status: string = "Assigned") {
 
     let q = query(
       collection(db, "leads"),
-      where("assignedTo", "==", userId),
-      where("leadStatus", "==", status),
-      orderBy("createdAt", "desc"),
-      limit(50) // Limited for realtime efficiency
+      where("assignedTo", "==", userId)
     );
+
+    if (status !== "All") {
+      q = query(q, where("leadStatus", "==", status));
+    }
+
+    q = query(q, orderBy("createdAt", "desc"), limit(100));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Lead));

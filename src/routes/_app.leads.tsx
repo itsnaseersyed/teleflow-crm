@@ -68,7 +68,6 @@ type Lead = {
   createdAt: any;
   createdBy: string;
   uploadBatchId?: string;
-  escalationStatus?: "none" | "pending_senior" | "closed_by_senior";
 };
 
 interface ImportBatch {

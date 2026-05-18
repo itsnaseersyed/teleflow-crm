@@ -73,7 +73,7 @@ function FollowupsPage() {
   const rowVirtualizer = useVirtualizer({
     count: hasNextPage ? allFollowups.length + 1 : allFollowups.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 90,
+    estimateSize: () => 75,
     overscan: 10,
   });
 
@@ -205,7 +205,7 @@ function FollowupsPage() {
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className="flex items-center justify-between p-4 gap-3 border-b last:border-0"
+                className="flex items-center justify-between p-3 gap-2 sm:gap-3 border-b last:border-0"
               >
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-sm truncate">{f.customerName ?? "Customer"}</div>
@@ -238,7 +238,7 @@ function FollowupsPage() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8 text-orange-600 hover:bg-orange-50"
-                      onClick={() => navigate({ to: "/lead/$leadId/call", params: { leadId: f.leadId! }, search: { from: "followups" }})}
+                      onClick={() => navigate({ to: "/lead/$leadId/call", params: { leadId: f.leadId! }, search: { from: "followups", status: undefined }})}
                       title="Log Call"
                     >
                       <Pencil className="h-4 w-4" />

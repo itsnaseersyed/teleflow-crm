@@ -200,11 +200,10 @@ function LeadAssignmentPage() {
     if (countToDistribute <= 0 || selectedTeleIds.length === 0) { toast.error("Select count and team"); return; }
     setIsDistributing(true); setDistributionProgress(0);
     try {
-      let processed = 0; let lastDoc = null; let teleIndex = 0;
+      let processed = 0; let teleIndex = 0;
       while (processed < countToDistribute) {
         const currentBatchSize = Math.min(countToDistribute - processed, 500);
-        let q = query(collection(db, "leads"), where("leadStatus", "==", "Unassigned"), orderBy("createdAt", "desc"), limit(currentBatchSize));
-        if (lastDoc) q = query(q, startAfter(lastDoc));
+        const q = query(collection(db, "leads"), where("leadStatus", "==", "Unassigned"), orderBy("createdAt", "desc"), limit(currentBatchSize));
         const snap = await getDocs(q);
         if (snap.empty) break;
         const batch = writeBatch(db);
@@ -217,7 +216,7 @@ function LeadAssignmentPage() {
           teleIndex++;
         });
         await batch.commit();
-        processed += snap.docs.length; lastDoc = snap.docs[snap.docs.length - 1];
+        processed += snap.docs.length;
         setDistributionProgress(Math.round((processed / countToDistribute) * 100));
       }
       toast.success(`Distributed ${processed} leads!`);

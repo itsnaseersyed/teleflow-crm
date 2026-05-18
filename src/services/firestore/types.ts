@@ -44,9 +44,6 @@ export interface Lead {
   // Lead escalation system (junior → senior workflow)
   sourcedBy?: string; // uid of junior who identified this lead
   handledBy?: string; // uid of senior who closed the deal
-  escalationStatus?: "none" | "pending_senior" | "closed_by_senior"; // Escalation workflow status
-  escalatedAt?: Date; // When escalated to senior
-  escalationNotes?: string; // Junior's notes for senior
 }
 
 export interface LeadImportBatch {

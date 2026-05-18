@@ -66,9 +66,6 @@ interface Lead {
   // Escalation fields
   sourcedBy?: string; // Junior who sourced the lead
   handledBy?: string; // Senior who closed it
-  escalationStatus?: "none" | "pending_senior" | "closed_by_senior"; // Escalation status
-  escalatedAt?: Date; // When escalated
-  escalationNotes?: string; // Notes from junior
 }
 
 
@@ -120,7 +117,7 @@ function MyLeadsPage() {
     navigate({
       to: "/lead/$leadId/call",
       params: { leadId },
-      search: { from: "my-leads" }
+      search: { from: "my-leads", status: filterStatus }
     });
   };
 
@@ -146,19 +143,20 @@ function MyLeadsPage() {
                 {filteredLeads.length} leads in current status
               </CardDescription>
             </div>
-            <div className="flex gap-3 flex-col sm:flex-row">
+            <div className="flex gap-3 flex-col sm:flex-row w-full sm:w-auto">
               <Input
                 placeholder="Search by name, phone..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="sm:w-64"
+                className="w-full sm:w-64"
               />
               <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="sm:w-48">
+                <SelectTrigger className="w-full sm:w-48">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Assigned">Pending</SelectItem>
+                  <SelectItem value="All">All Leads</SelectItem>
+                  <SelectItem value="Assigned">Assigned / Ready</SelectItem>
                   <SelectItem value="In Progress">In Progress</SelectItem>
                   <SelectItem value="Follow-Up">Follow-Up</SelectItem>
                   <SelectItem value="Not Interested">Not Interested</SelectItem>
@@ -185,106 +183,51 @@ function MyLeadsPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="divide-y border rounded-lg overflow-hidden bg-white shadow-sm">
               {filteredLeads.map((lead, index) => (
                 <div
                   key={lead.id}
-                  className="rounded-lg border p-4 hover:bg-muted/50 transition cursor-pointer"
+                  className="flex items-center p-3 hover:bg-slate-50 transition-colors cursor-pointer gap-3 group"
                   onClick={() => handleStartCall(lead.id)}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    {/* Lead Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-1 rounded">
-                          #{index + 1}
+                  <div className="flex-shrink-0 text-[10px] font-bold text-slate-400 w-6 text-center">
+                    {index + 1}
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <p className="text-sm font-semibold text-slate-900 truncate">
+                        {lead.customerName}
+                      </p>
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 whitespace-nowrap">
+                        {lead.leadStatus === "Assigned" ? "Ready" : lead.leadStatus}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center gap-3 text-xs text-slate-500">
+                      <span className="flex items-center gap-1">
+                        <Phone className="h-3 w-3" />
+                        {lead.mobileNumber}
+                      </span>
+                      {lead.city && (
+                        <span className="hidden sm:flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          <span className="truncate max-w-[100px]">{lead.city}</span>
                         </span>
-                        <h3 className="font-semibold text-base truncate">
-                          {lead.customerName}
-                        </h3>
-                      </div>
-
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Phone className="h-4 w-4" />
-                          <span>{lead.mobileNumber}</span>
-                        </div>
-                        {lead.city && (
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <MapPin className="h-4 w-4" />
-                            <span>{lead.city}</span>
-                          </div>
-                        )}
-
-                        {lead.lastCalledAt && (
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Clock className="h-4 w-4" />
-                            <span className="text-xs">
-                              {(lead.lastCalledAt as any).toDate?.() 
-                                ? (lead.lastCalledAt as any).toDate().toLocaleDateString() 
-                                : new Date(lead.lastCalledAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {lead.lastCallStatus && (
-                        <div className="mt-2">
-                          <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">
-                            Last: {lead.lastCallStatus}
-                          </span>
-                        </div>
+                      )}
+                      {lead.lastCalledAt && (
+                        <span className="hidden sm:flex items-center gap-1 opacity-70">
+                          <Clock className="h-3 w-3" />
+                          {(lead.lastCalledAt as any).toDate?.() 
+                            ? (lead.lastCalledAt as any).toDate().toLocaleDateString() 
+                            : new Date(lead.lastCalledAt).toLocaleDateString()}
+                        </span>
                       )}
                     </div>
+                  </div>
 
-                    {/* Status & Action */}
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <div className="flex items-center justify-end gap-2 mb-2">
-                          <p className="text-xs text-muted-foreground">
-                            {lead.leadStatus === "Assigned" && "Ready to call"}
-                            {lead.leadStatus === "In Progress" && "In Progress"}
-                            {lead.leadStatus === "Follow-Up" && "Follow-Up"}
-                            {lead.leadStatus === "Not Interested" && "Not Interested"}
-                            {lead.leadStatus === "Completed" && "Completed"}
-                            {lead.leadStatus === "Converted" && "Converted"}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1 justify-end">
-                          <a
-                            href={`tel:${lead.mobileNumber}`}
-                            onClick={(e) => e.stopPropagation()}
-                            title="Call"
-                          >
-                            <Button size="icon" variant="ghost">
-                              <Phone className="h-4 w-4" />
-                            </Button>
-                          </a>
-                          <a
-                            href={`https://wa.me/${lead.mobileNumber.replace(/\D/g, "")}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            title="WhatsApp"
-                          >
-                            <Button size="icon" variant="ghost">
-                              <MessageCircle className="h-4 w-4 text-success" />
-                            </Button>
-                          </a>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStartCall(lead.id);
-                            }}
-                            title="Log Call / Feedback"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
+                  <div className="flex-shrink-0 text-slate-300 group-hover:text-primary transition-colors">
+                    <ChevronRight className="h-4 w-4" />
                   </div>
                 </div>
               ))}
@@ -313,33 +256,39 @@ function MyLeadsPage() {
                 <AlertDescription>No converted leads yet. Keep sourcing qualified leads!</AlertDescription>
               </Alert>
             ) : (
-              <div className="space-y-3">
+              <div className="divide-y border border-purple-100 rounded-lg overflow-hidden bg-white shadow-sm">
                 {convertedLeads.map((lead) => (
                   <div
                     key={lead.id}
-                    className="p-4 rounded-lg border border-purple-200 bg-white flex items-center justify-between hover:shadow-md transition-shadow"
+                    className="flex items-center p-3 hover:bg-purple-50/50 transition-colors gap-3"
                   >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
-                        <p className="font-semibold text-purple-900">{lead.customerName}</p>
+                    <div className="flex-shrink-0 text-green-500">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-sm font-semibold text-purple-900 truncate">
+                          {lead.customerName}
+                        </p>
                       </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
                           <Phone className="h-3 w-3" />
-                          <span>{lead.mobileNumber}</span>
-                        </div>
+                          {lead.mobileNumber}
+                        </span>
                         {lead.city && (
-                          <div className="flex items-center gap-1">
+                          <span className="hidden sm:flex items-center gap-1">
                             <MapPin className="h-3 w-3" />
-                            <span>{lead.city}</span>
-                          </div>
+                            <span className="truncate max-w-[100px]">{lead.city}</span>
+                          </span>
                         )}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-                        ✓ Converted
+
+                    <div className="flex-shrink-0">
+                      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-green-50 text-green-600 border border-green-100">
+                        Converted
                       </span>
                     </div>
                   </div>
