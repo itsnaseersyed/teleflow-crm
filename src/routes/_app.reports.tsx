@@ -115,12 +115,15 @@ function ReportsPage() {
           tcCallsToday.some(call => call.leadId === lead.id)
         ).length;
 
+        const incompleteWork = tcLeads.filter(lead => lead.leadStatus === "Assigned").length;
+
         return {
           id: tc.id,
           name: tc.fullName,
           assigned: tcLeadsToday.length,
           dialed: dialedToday,
           followup: followupAttempts,
+          incomplete: incompleteWork,
         };
       });
 
@@ -281,19 +284,20 @@ function ReportsPage() {
                     <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-center">Assigned Today</th>
                     <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-center">Dialed Today</th>
                     <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-center">Follow-up Attempts</th>
+                    <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-center">Incomplete Work</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-muted/60">
                   {isSyncing && perfData.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="p-10 text-center text-muted-foreground">
+                      <td colSpan={5} className="p-10 text-center text-muted-foreground">
                         <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-gradient-accent" />
                         Calculating performance metrics...
                       </td>
                     </tr>
                   ) : perfData.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="p-10 text-center text-muted-foreground text-sm">
+                      <td colSpan={5} className="p-10 text-center text-muted-foreground text-sm">
                         No active telecallers found or no leads assigned.
                       </td>
                     </tr>
@@ -314,6 +318,9 @@ function ReportsPage() {
                         </td>
                         <td className="px-4 py-3.5 text-center font-semibold text-amber-500">
                           {perf.followup}
+                        </td>
+                        <td className="px-4 py-3.5 text-center font-semibold text-rose-500">
+                          {perf.incomplete}
                         </td>
                       </tr>
                     ))

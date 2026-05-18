@@ -97,7 +97,8 @@ function LeadAssignmentPage() {
   const { data: totalLeadsCount = 0 } = useQuery({
     queryKey: ["leads-count", statusFilter],
     queryFn: async () => {
-      const q = query(collection(db, "leads"), where("leadStatus", "==", statusFilter));
+      const queryStatus = statusFilter === "Incomplete" ? "Assigned" : statusFilter;
+      const q = query(collection(db, "leads"), where("leadStatus", "==", queryStatus));
       const snapshot = await getCountFromServer(q);
       return snapshot.data().count;
     },
@@ -118,9 +119,10 @@ function LeadAssignmentPage() {
     initialPageParam: undefined as any,
     queryFn: async ({ pageParam }) => {
       try {
+        const queryStatus = statusFilter === "Incomplete" ? "Assigned" : statusFilter;
         let q = query(
           collection(db, "leads"),
-          where("leadStatus", "==", statusFilter),
+          where("leadStatus", "==", queryStatus),
           orderBy("createdAt", "desc"),
           limit(PAGE_SIZE)
         );
@@ -140,12 +142,28 @@ function LeadAssignmentPage() {
     getNextPageParam: (lastPage) => lastPage.lastDoc || undefined,
   });
 
+  // 4. Telecallers
+  const { data: telecallers = [] } = useQuery({
+    queryKey: ["telecallers"],
+    enabled: !!user,
+    queryFn: async () => {
+      const q = query(collection(db, "users"), where("role", "==", "telecaller"));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }) as User);
+    },
+  });
+
   const allLeads = useMemo(() => {
     const fetched = data?.pages.flatMap((page) => page.leads) ?? [];
     if (!searchQuery) return fetched;
     const s = searchQuery.toLowerCase();
-    return fetched.filter(l => l.customerName?.toLowerCase().includes(s) || l.mobileNumber?.includes(s));
-  }, [data, searchQuery]);
+    return fetched.filter(l => {
+      const tcName = telecallers.find(t => t.id === l.assignedTo)?.fullName?.toLowerCase() || "";
+      return l.customerName?.toLowerCase().includes(s) || 
+             l.mobileNumber?.includes(s) ||
+             tcName.includes(s);
+    });
+  }, [data, searchQuery, telecallers]);
 
   // 3. Virtualizer
   const rowVirtualizer = useVirtualizer({
@@ -161,17 +179,6 @@ function LeadAssignmentPage() {
       fetchNextPage();
     }
   }, [hasNextPage, isFetchingNextPage, allLeads.length, rowVirtualizer.getVirtualItems(), fetchNextPage]);
-
-  // 4. Telecallers
-  const { data: telecallers = [] } = useQuery({
-    queryKey: ["telecallers"],
-    enabled: !!user,
-    queryFn: async () => {
-      const q = query(collection(db, "users"), where("role", "==", "telecaller"));
-      const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }) as User);
-    },
-  });
 
   const assignMutation = useMutation({
     mutationFn: async ({ leadId, telecallerId }: { leadId: string; telecallerId: string }) => {
@@ -282,15 +289,30 @@ function LeadAssignmentPage() {
           </div>
 
           <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full">
-            <TabsList className="w-full grid grid-cols-3 h-9 p-1 bg-white border">
+            <TabsList className="w-full grid grid-cols-4 h-9 p-1 bg-white border">
               <TabsTrigger value="Unassigned" className="text-[10px] h-7">Unassigned</TabsTrigger>
               <TabsTrigger value="Assigned" className="text-[10px] h-7">Assigned</TabsTrigger>
               <TabsTrigger value="In Progress" className="text-[10px] h-7">Progress</TabsTrigger>
+              <TabsTrigger value="Incomplete" className="text-[10px] h-7">Incomplete Work</TabsTrigger>
             </TabsList>
 
             <TabsContent value={statusFilter} className="mt-3">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
+                <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={allLeads.length > 0 && selectedLeads.size === allLeads.length}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedLeads(new Set(allLeads.map(l => l.id)));
+                        } else {
+                          setSelectedLeads(new Set());
+                        }
+                      }}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-[10px] font-medium text-slate-600 hidden sm:inline">Select All</span>
+                  </div>
                   <div className="relative flex-1 max-w-[200px]">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
                     <Input placeholder="Search..." className="h-7 pl-7 text-[10px] border-none bg-transparent" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
