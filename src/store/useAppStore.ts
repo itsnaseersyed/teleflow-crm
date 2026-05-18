@@ -18,7 +18,7 @@ interface AppState {
   setSearchQuery: (query: string) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>()((set) => ({
   sidebarOpen: true,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   
